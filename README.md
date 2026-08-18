@@ -193,6 +193,12 @@ Add it under *Settings, Secrets and variables, Actions, New repository secret*.
 An Automation token is the right kind because it bypasses 2FA, which an
 unattended workflow cannot satisfy.
 
+Releases are published with [npm provenance](https://docs.npmjs.com/generating-provenance-statements),
+so every version carries a signed, verifiable record of the workflow run and
+commit that built it. That needs the `id-token: write` permission the workflow
+already requests, a public repository, and the `repository` field in
+`package.json` pointing at this repo.
+
 Two things that will bite if they apply to you: the workflow pushes the bump
 commit to the default branch, so a branch protection rule that blocks pushes
 will stop it; and the tag it pushes uses `GITHUB_TOKEN`, which by design does

@@ -23,7 +23,10 @@ on:
     tags: ['v*']
 
 permissions:
+  # contents: write lets the workflow push the version bump and its tag.
+  # id-token: write is what npm --provenance signs with, via OIDC.
   contents: write
+  id-token: write
 
 concurrency:
   # Never let two releases run at once.
@@ -90,10 +93,12 @@ jobs:
           fi
 
       - name: Publish
+        # --provenance attaches a signed, verifiable record of which workflow run
+        # and which commit produced this tarball. It needs id-token: write, a
+        # public repo, and a `repository` field in package.json that matches.
         # --access public is required the first time a name is published and is
-        # harmless afterwards. Add --provenance once the repo is public if you
-        # want a signed link back to this workflow run.
-        run: npm publish --access public --tag "${{ inputs.dist_tag || 'latest' }}"
+        # harmless afterwards.
+        run: npm publish --provenance --access public --tag "${{ inputs.dist_tag || 'latest' }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
