@@ -54,10 +54,16 @@
   },
   "scripts": {
     "start": "node bin/claude-memory-admin.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "build:css": "tailwindcss -i styles/app.css -o public/styles.css --minify",
+    "dev:css": "tailwindcss -i styles/app.css -o public/styles.css --watch",
+    "prepublishOnly": "npm run build:css"
   },
   "dependencies": {
     "dompurify": "^3.2.7",
     "marked": "^16.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3"
   }
 }

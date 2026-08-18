@@ -51,6 +51,12 @@ jobs:
 
       - run: npm ci
 
+      - name: Check the compiled stylesheet is in sync
+        run: |
+          npm run build:css
+          git diff --exit-code public/styles.css \
+            || { echo "::error::styles/app.css changed without rebuilding. Run 'npm run build:css' and commit public/styles.css."; exit 1; }
+
       # Catches a broken `files` list before it reaches npm, where a published
       # version cannot be replaced.
       - name: Check the published file list
@@ -74,4 +80,5 @@ jobs:
           curl -fsS -o /dev/null "http://localhost:4173/"
           curl -fsS -o /dev/null "http://localhost:4173/vendor/marked.js"
           curl -fsS -o /dev/null "http://localhost:4173/vendor/purify.js"
+          curl -fsS -o /dev/null "http://localhost:4173/styles.css"
           curl -fsS -o /dev/null "http://localhost:4173/api/stores"

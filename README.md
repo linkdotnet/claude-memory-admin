@@ -122,7 +122,11 @@ session and, past the limit, silently stops loading.
 - **The cutoff, drawn where it falls**. Past the limit, the MEMORY.md tab rules a
   line across the file and dims everything below it, and Prune names the memories
   that stopped being loaded. Because the stripping shifts every line, the cutoff
-  is mapped back to real line numbers rather than counted in the loaded text.
+  is mapped back to real line numbers rather than counted in the loaded text. The
+  tab reads the index either **rendered** — headings, lists and clickable entries,
+  with pointers to files that do not exist struck through — or as **source**, with
+  line numbers. Either way the cutoff is drawn in the same place. The choice is
+  remembered.
 - **Long hooks**. The hook is the text after the dash in `MEMORY.md`. A
   400-character hook can cost more than the memory it points at, and shortening
   it is the cheapest win available.
@@ -226,11 +230,17 @@ cd claude-memory-admin
 npm install
 npm start                 # or: node server.mjs
 npm test                  # runs on a throwaway copy of your real store
+npm run dev:css           # only when editing styles/app.css
 ```
 
-No bundler and no build step: the backend is `node:http` plus `node:fs`, and the
-frontend is plain ES modules the browser loads directly. Two runtime dependencies,
-`marked` and `dompurify`, both only for rendering memory bodies safely.
+No bundler and no build step to run it: the backend is `node:http` plus `node:fs`,
+and the frontend is plain ES modules the browser loads directly. Two runtime
+dependencies, `marked` and `dompurify`, both only for rendering memory bodies safely.
+
+Styling is the one thing that is compiled. `styles/app.css` is the Tailwind v4
+source and `public/styles.css` is its committed output, so an installed copy is
+ready to serve and never builds anything. After editing the source, run
+`npm run build:css` and commit the result — CI rebuilds it and fails on drift.
 
 | Path | Purpose |
 | --- | --- |
@@ -246,6 +256,7 @@ frontend is plain ES modules the browser loads directly. Two runtime dependencie
 | `src/stats.mjs` | Load-limit accounting and overlap detection |
 | `src/search.mjs` | Full-text search across every store |
 | `src/mutate.mjs` | Delete / restore / unlink, the only code that writes |
+| `styles/app.css` | Tailwind source, compiled to `public/styles.css` |
 | `public/` | Frontend |
 
 Tests run against committed fixtures under `test/fixtures/`: a projects store

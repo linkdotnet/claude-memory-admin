@@ -1,15 +1,12 @@
-// Force-directed SVG graph of the [[wikilink]] edges within one project.
-//
-// Hand-rolled rather than pulled from a library: the largest project has ~60
-// nodes, which a plain spring/repulsion relaxation handles fine, and it keeps
-// the app at two dependencies with no bundler.
+import * as ui from '/ui.mjs';
+
 
 const TYPE_COLORS = {
-  project: '#5b8def',
-  feedback: '#d98324',
-  user: '#8b5cf6',
-  reference: '#3f9d6d',
-  unknown: '#9c988d',
+  project: 'var(--ui-type-project)',
+  feedback: 'var(--ui-type-feedback)',
+  user: 'var(--ui-type-user)',
+  reference: 'var(--ui-type-reference)',
+  unknown: 'var(--ui-fg-subtle)',
 };
 
 function colorFor(type) {
@@ -21,7 +18,6 @@ function simulate(nodes, edges, { width, height, iterations = 320, repulsion = 1
   const k = Math.sqrt(area / Math.max(nodes.length, 1)) * 0.72;
   const index = new Map(nodes.map((n, i) => [n.id, i]));
 
-  // Deterministic ring start: same project always lays out the same way.
   nodes.forEach((node, i) => {
     const angle = (i / nodes.length) * Math.PI * 2;
     const radius = Math.min(width, height) * 0.32 * (0.55 + ((i * 37) % 100) / 220);
@@ -66,8 +62,6 @@ function simulate(nodes, edges, { width, height, iterations = 320, repulsion = 1
       b.dx += fx; b.dy += fy;
     }
 
-    // Pull toward the centre, proportional to distance, so disconnected
-    // components stay in frame instead of drifting outward forever.
     for (const node of nodes) {
       node.dx += (width / 2 - node.x) * 0.006;
       node.dy += (height / 2 - node.y) * 0.006;
@@ -81,14 +75,10 @@ function simulate(nodes, edges, { width, height, iterations = 320, repulsion = 1
     temperature *= 0.99;
   }
 
-  // Rescale the settled layout to fill the viewport. Clamping to the walls
-  // during the simulation would instead flatten everything onto the border,
-  // which is what makes hand-rolled force layouts look broken.
   fitToBox(nodes, width, height, 46);
   return nodes;
 }
 
-/** Map the settled positions onto the drawing area, preserving aspect ratio. */
 function fitToBox(nodes, width, height, pad) {
   const xs = nodes.map((n) => n.x);
   const ys = nodes.map((n) => n.y);
@@ -98,9 +88,6 @@ function fitToBox(nodes, width, height, pad) {
   const maxY = Math.max(...ys);
   const spanX = maxX - minX || 1;
   const spanY = maxY - minY || 1;
-  // Scale each axis to the box, but cap how far they may differ: a uniform
-  // scale wastes half the canvas on a wide panel, and an uncapped one stretches
-  // the graph into something misleading.
   let scaleX = (width - pad * 2) / spanX;
   let scaleY = (height - pad * 2) / spanY;
   const MAX_ANISOTROPY = 1.45;
@@ -115,7 +102,6 @@ function fitToBox(nodes, width, height, pad) {
   }
 }
 
-/** Connected components, so each cluster can be laid out on its own. */
 function findComponents(nodes, edges) {
   const adjacency = new Map(nodes.map((n) => [n.id, []]));
   for (const edge of edges) {
@@ -151,16 +137,6 @@ function boundsOf(nodes) {
   return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
 }
 
-/**
- * Lay out each connected component on its own, then pack the components into
- * the canvas.
- *
- * Simulating everything in one field looks wrong as soon as a project has more
- * than one cluster: unconnected components drift apart, and scaling the result
- * to fit then squashes the largest cluster into an unreadable knot. Packing
- * gives every cluster the same generous internal spacing regardless of how many
- * there are.
- */
 function layoutComponents(nodes, edges, { width, height, repulsion }) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const groups = findComponents(nodes, edges)
@@ -171,7 +147,6 @@ function layoutComponents(nodes, edges, { width, height, repulsion }) {
   for (const group of groups) {
     const ids = new Set(group.map((n) => n.id));
     const inner = edges.filter((e) => ids.has(e.from) && ids.has(e.to));
-    // A box roughly proportional to the node count keeps density even.
     const side = Math.max(180, Math.sqrt(group.length) * 190);
     simulate(group, inner, { width: side, height: side, iterations: 420, repulsion });
     const bounds = boundsOf(group);
@@ -183,7 +158,6 @@ function layoutComponents(nodes, edges, { width, height, repulsion }) {
     });
   }
 
-  // Shelf packing: fill a row until it would overflow, then start a new one.
   const gap = 26;
   let cursorX = 0;
   let cursorY = 0;
@@ -206,8 +180,6 @@ function layoutComponents(nodes, edges, { width, height, repulsion }) {
     }
   }
 
-  // Reuse the same fit the single-component path uses, so one big cluster still
-  // fills the canvas instead of being shrunk to fit a square working box.
   fitToBox(nodes, width, height, 40);
 }
 
@@ -218,10 +190,6 @@ function svgEl(tag, attrs = {}) {
   return el;
 }
 
-/**
- * Render the graph into `container`. Dangling wikilink targets are drawn as
- * hollow nodes so a broken link is visible rather than simply absent.
- */
 export function renderGraph(container, graph, { onSelect, onSpreadChange, selected, spread = 1.6 } = {}) {
   container.textContent = '';
 
@@ -234,8 +202,7 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
 
   if (nodes.length === 0) {
     const note = document.createElement('p');
-    note.className = 'muted';
-    note.style.padding = '40px';
+    note.className = ui.graphEmpty;
     note.textContent = 'No memories to graph yet.';
     container.append(note);
     return;
@@ -250,9 +217,6 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   const width = Math.max(container.clientWidth || 900, 480);
   const baseHeight = 620;
 
-  // Nodes with no links at all are laid out in their own strip rather than
-  // left in the simulation: a single unlinked node drifts to the far edge and
-  // squashes everything else when the layout is scaled to fit.
   const degree = new Map(nodes.map((n) => [n.id, 0]));
   for (const edge of edges) {
     degree.set(edge.from, (degree.get(edge.from) || 0) + 1);
@@ -261,9 +225,6 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   const linked = nodes.filter((n) => degree.get(n.id) > 0);
   const unlinked = nodes.filter((n) => !degree.get(n.id));
 
-  // The strip grows with the number of rows it has to hold. A fixed height
-  // overflowed the canvas as soon as a project had more than one row of
-  // unlinked notes, dropping them behind the legend.
   const perRow = Math.max(1, Math.floor((width - 120) / 160));
   const stripRows = unlinked.length ? Math.ceil(unlinked.length / perRow) : 0;
   const strip = stripRows ? 34 + stripRows * 46 : 0;
@@ -302,15 +263,13 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
 
   const position = new Map(nodes.map((n) => [n.id, n]));
   const edgeGroup = svgEl('g', { stroke: 'currentColor', 'stroke-opacity': '.28', 'marker-end': 'url(#arrow)' });
-  // Kept as pairs rather than relying on child order: edges whose endpoints are
-  // missing are skipped, so the indices would not line up.
   const drawnEdges = [];
   for (const edge of edges) {
     const a = position.get(edge.from);
     const b = position.get(edge.to);
     if (!a || !b) continue;
     const line = svgEl('line', {
-      class: 'edge',
+      class: ui.graphEdge,
       x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       'stroke-dasharray': String(edge.to).startsWith('ghost:') ? '4 3' : '',
     });
@@ -338,28 +297,22 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   }
 
   for (const node of nodes) {
-    const group = svgEl('g', { class: `node${node.id === selected ? ' hi' : ''}`, transform: `translate(${node.x},${node.y})` });
+    const group = svgEl('g', { class: ui.graphNode(node.id === selected), transform: `translate(${node.x},${node.y})` });
     const radius = node.ghost ? 6 : 7 + Math.min(node.degree, 8) * 1.1;
 
-    // A generous invisible disc widening the target: at this density the drawn
-    // circles are only a few pixels across and are painfully hard to hit.
-    // Handlers go on the group, not on this disc - the visible circle paints
-    // over its centre, so a disc-level listener would only catch the ring
-    // around the dot and clicks on the node itself would do nothing.
-    const hit = svgEl('circle', { class: 'hit', r: Math.max(radius + 9, 15) });
+    const hit = svgEl('circle', { class: ui.graphHit, r: Math.max(radius + 9, 15) });
     group.append(hit);
 
     const circle = svgEl('circle', {
       r: radius,
       fill: node.ghost ? 'transparent' : colorFor(node.type),
-      stroke: node.ghost ? '#b3261e' : node.status === 'orphan' ? '#a86a12' : 'rgba(0,0,0,.18)',
+      stroke: node.ghost ? 'var(--ui-danger)' : node.status === 'orphan' ? 'var(--ui-warn)' : 'var(--ui-line-strong)',
       'stroke-dasharray': node.ghost ? '3 2' : node.status === 'orphan' ? '3 2' : '',
     });
     const label = svgEl('text', {
       y: radius + 10,
       'text-anchor': 'middle',
-      // Halo in the panel colour so overlapping labels stay readable.
-      stroke: 'var(--panel)',
+      stroke: 'var(--ui-surface)',
       'stroke-width': '2.5',
       'paint-order': 'stroke',
       'stroke-linejoin': 'round',
@@ -378,8 +331,6 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
       group.addEventListener('click', (event) => { event.stopPropagation(); onSelect(node.id); });
     }
 
-    // Hovering focuses the node and its neighbours: the only practical way to
-    // read a dense cluster without zooming into it first.
     group.addEventListener('pointerenter', () => focusOn(node.id));
     group.addEventListener('pointerleave', () => focusOn(null));
 
@@ -400,7 +351,6 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
     }
   }
 
-  // Pan and zoom.
   let scale = 1;
   let panX = 0;
   let panY = 0;
@@ -419,9 +369,6 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
     apply();
   }, { passive: false });
 
-  // Panning only engages once the pointer has actually moved. Capturing on
-  // pointerdown instead would retarget the pointer to the <svg>, and the click
-  // on a node would never reach it - which is why nodes were unclickable.
   const DRAG_THRESHOLD = 4;
   let pending = null;
   let panning = false;
@@ -458,7 +405,6 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   svg.addEventListener('pointerup', endDrag);
   svg.addEventListener('pointercancel', endDrag);
 
-  // Zoom helpers used by the toolbar.
   const zoomBy = (factor) => {
     const next = Math.max(0.3, Math.min(6, scale * factor));
     const cx = width / 2;
@@ -473,10 +419,11 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   container.append(svg);
 
   const toolbar = document.createElement('div');
-  toolbar.className = 'graph-toolbar';
+  toolbar.className = ui.graphToolbar;
 
   const makeButton = (label, title, onClick) => {
     const button = document.createElement('button');
+    button.className = ui.graphButton;
     button.textContent = label;
     button.title = title;
     button.onclick = onClick;
@@ -489,14 +436,15 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   );
 
   const spreadLabel = document.createElement('label');
+  spreadLabel.className = ui.graphLabel;
   spreadLabel.title = 'How far apart the layout pushes nodes';
   const slider = document.createElement('input');
+  slider.className = ui.graphRange;
   slider.type = 'range';
   slider.min = '1';
   slider.max = '4';
   slider.step = '0.2';
   slider.value = String(spread);
-  // Re-laying out is cheap here (<70 nodes) so it can happen on release.
   slider.addEventListener('change', () => {
     if (onSpreadChange) onSpreadChange(Number(slider.value));
   });
@@ -505,13 +453,21 @@ export function renderGraph(container, graph, { onSelect, onSpreadChange, select
   container.append(toolbar);
 
   const legend = document.createElement('div');
-  legend.className = 'legend';
-  const items = [
-    ...Object.entries(TYPE_COLORS).filter(([type]) => real.some((n) => n.type === type)),
-  ].map(([type, color]) => `<span><i style="background:${color}"></i>${type}</span>`);
-  items.push('<span><i style="border:1.5px dashed #a86a12"></i>orphan</span>');
-  if (ghosts.length) items.push('<span><i style="border:1.5px dashed #b3261e"></i>missing target</span>');
-  legend.innerHTML = items.join('');
+  legend.className = ui.graphLegend;
+  const entries = Object.entries(TYPE_COLORS)
+    .filter(([type]) => real.some((n) => n.type === type))
+    .map(([type, color]) => [type, `background:${color}`]);
+  entries.push(['orphan', 'border:1.5px dashed var(--ui-warn)']);
+  if (ghosts.length) entries.push(['missing target', 'border:1.5px dashed var(--ui-danger)']);
+  for (const [label, swatchStyle] of entries) {
+    const item = document.createElement('span');
+    item.className = ui.graphLegendItem;
+    const swatch = document.createElement('i');
+    swatch.className = ui.graphLegendSwatch;
+    swatch.style.cssText = swatchStyle;
+    item.append(swatch, document.createTextNode(label));
+    legend.append(item);
+  }
   container.append(legend);
 
   return byName;
