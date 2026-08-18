@@ -74,4 +74,4 @@ jobs:
           curl -fsS -o /dev/null "http://localhost:4173/"
           curl -fsS -o /dev/null "http://localhost:4173/vendor/marked.js"
           curl -fsS -o /dev/null "http://localhost:4173/vendor/purify.js"
-          curl -fsS -o /dev/null "http://localhost:4173/api/projects"
+          curl -fsS -o /dev/null "http://localhost:4173/api/stores"
