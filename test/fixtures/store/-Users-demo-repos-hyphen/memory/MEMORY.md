@@ -1,0 +1,1 @@
+- [No em-dashes](no-em-dashes.md) - always plain hyphens, in replies and in code

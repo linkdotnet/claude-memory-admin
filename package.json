@@ -1,0 +1,63 @@
+{
+  "name": "claude-memory-admin",
+  "version": "1.0.0",
+  "description": "Browse, audit and prune the auto memory Claude Code keeps under ~/.claude/projects",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "claude-memory",
+    "auto-memory",
+    "memory",
+    "memory-md",
+    "claude-md",
+    "cleanup",
+    "prune",
+    "declutter",
+    "audit",
+    "context-window",
+    "token-budget",
+    "knowledge-base",
+    "wikilinks",
+    "markdown",
+    "cli",
+    "local-first",
+    "developer-tools"
+  ],
+  "license": "MIT",
+  "author": "Steven Giesel",
+  "homepage": "https://github.com/linkdotnet/claude-memory-admin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linkdotnet/claude-memory-admin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/linkdotnet/claude-memory-admin/issues"
+  },
+  "type": "module",
+  "bin": {
+    "claude-memory-admin": "bin/claude-memory-admin.mjs"
+  },
+  "exports": {
+    ".": "./server.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "server.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "scripts": {
+    "start": "node bin/claude-memory-admin.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.7",
+    "marked": "^16.4.0"
+  }
+}

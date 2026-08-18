@@ -1,0 +1,108 @@
+name: Release
+
+# Two ways in:
+#   1. Run this workflow and pick a bump. It bumps package.json, commits, tags,
+#      pushes, and publishes. Nothing to do locally.
+#   2. Push a tag like v1.2.3 yourself. It publishes whatever version is already
+#      in package.json, after checking the two agree.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump to apply'
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major, prepatch, preminor, premajor, prerelease]
+      dist_tag:
+        description: 'npm dist-tag'
+        required: false
+        default: latest
+        type: string
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never let two releases run at once.
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Needed so the bump commit can be pushed back.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Bump the version, commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # npm version writes package.json and package-lock.json, commits both,
+          # and creates the matching v-tag.
+          NEW="$(npm version "${{ inputs.bump }}" -m 'Release v%s')"
+          echo "Bumped to $NEW"
+          git push origin HEAD:"${GITHUB_REF_NAME}"
+          git push origin "$NEW"
+          echo "RELEASE_VERSION=${NEW#v}" >> "$GITHUB_ENV"
+
+      # Publishing a version that disagrees with its tag is not something npm
+      # lets you take back, so fail here instead.
+      - name: Check the tag matches package.json
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          PKG="$(node -p "require('./package.json').version")"
+          WANTED="${GITHUB_REF_NAME#v}"
+          if [ "$PKG" != "$WANTED" ]; then
+            echo "::error::package.json is $PKG but the tag says $WANTED. Use the Release workflow, or run 'npm version' and push the tag it creates."
+            exit 1
+          fi
+          echo "RELEASE_VERSION=$PKG" >> "$GITHUB_ENV"
+
+      - name: Fail early if that version is already published
+        run: |
+          set -euo pipefail
+          NAME="$(node -p "require('./package.json').name")"
+          if npm view "$NAME@$RELEASE_VERSION" version > /dev/null 2>&1; then
+            echo "::error::$NAME@$RELEASE_VERSION is already published. npm never allows a version to be replaced."
+            exit 1
+          fi
+
+      - name: Publish
+        # --access public is required the first time a name is published and is
+        # harmless afterwards. Add --provenance once the repo is public if you
+        # want a signed link back to this workflow run.
+        run: npm publish --access public --tag "${{ inputs.dist_tag || 'latest' }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Published \`claude-memory-admin@$RELEASE_VERSION\`"
+            echo
+            echo '```bash'
+            echo "npm install -g claude-memory-admin@$RELEASE_VERSION"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

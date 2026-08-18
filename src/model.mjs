@@ -1,0 +1,241 @@
+// Builds the full view model for one project: its index, its memory files, the
+// wikilink graph between them, and the consistency problems worth surfacing.
+//
+// The whole store is a few hundred kilobytes, so this runs per request. No
+// cache, no watcher, no invalidation bugs.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { parseIndex, parseFrontmatter, extractWikilinks } from './parse.mjs';
+import { listMemoryFiles, memoryDir, resolveProjectPath, shortLabel } from './projects.mjs';
+import { ageInDays, estimateTokens, findDuplicates, indexStats } from './stats.mjs';
+
+export const TRASH_DIR = '.trash';
+
+function readIfExists(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** Parse one memory file into its metadata, body and outbound wikilinks. */
+export function loadMemory(dir, file) {
+  const raw = readIfExists(path.join(dir, file));
+  if (raw === null) return null;
+
+  const { data, body, hasFrontmatter } = parseFrontmatter(raw);
+
+  // Two frontmatter shapes exist in the wild: most files nest everything under
+  // `metadata:`, but some write `type:`/`originSessionId:` at the root instead.
+  // Root-level extras are merged in first so a nested block still wins.
+  const nested = (data.metadata && typeof data.metadata === 'object') ? data.metadata : {};
+  const rootExtras = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'name' || key === 'description' || key === 'metadata') continue;
+    if (value && typeof value === 'object') continue;
+    rootExtras[key] = value;
+  }
+  const metadata = { ...rootExtras, ...nested };
+  const stem = file.replace(/\.md$/, '');
+  const name = typeof data.name === 'string' && data.name ? data.name : stem;
+
+  let stat = null;
+  try {
+    stat = fs.statSync(path.join(dir, file));
+  } catch { /* raced with a delete */ }
+
+  return {
+    file,
+    stem,
+    name,
+    description: typeof data.description === 'string' ? data.description : '',
+    type: metadata.type || 'unknown',
+    metadata,
+    hasFrontmatter,
+    // `name` and the filename usually agree but not always, so both are kept
+    // and the mismatch is reported under health.
+    nameMatchesFile: name === stem,
+    body,
+    raw,
+    bytes: stat ? stat.size : raw.length,
+    modified: metadata.modified || (stat ? new Date(stat.mtimeMs).toISOString() : null),
+    tokens: estimateTokens(raw),
+    outbound: extractWikilinks(body).map((w) => w.target),
+  };
+}
+
+/**
+ * Resolve a wikilink target to a memory file. Targets normally match a `name`,
+ * but fall back to the filename stem, which is what the mismatching files need.
+ */
+function buildResolver(memories) {
+  const byName = new Map();
+  const byStem = new Map();
+  for (const memory of memories) {
+    if (!byName.has(memory.name)) byName.set(memory.name, memory.file);
+    if (!byStem.has(memory.stem)) byStem.set(memory.stem, memory.file);
+  }
+  return (target) => byName.get(target) || byStem.get(target) || null;
+}
+
+export function buildProject(root, slug) {
+  const dir = memoryDir(root, slug);
+  const projectDir = path.join(root, slug);
+  const resolved = resolveProjectPath(projectDir, slug);
+  const hasMemoryDir = fs.existsSync(dir);
+
+  const indexRaw = readIfExists(path.join(dir, 'MEMORY.md'));
+  const index = indexRaw === null ? null : parseIndex(indexRaw);
+  const files = hasMemoryDir ? listMemoryFiles(dir) : [];
+  const memories = files.map((file) => loadMemory(dir, file)).filter(Boolean);
+
+  const indexedFiles = index ? index.indexedFiles : new Set();
+  const referencedFiles = index ? index.referencedFiles : new Set();
+  const resolve = buildResolver(memories);
+
+  // Outbound edges first, then inbound derived from them, so the two can never
+  // disagree.
+  const inbound = new Map(memories.map((m) => [m.file, []]));
+  const danglingWikilinks = [];
+  const edges = [];
+
+  for (const memory of memories) {
+    memory.outboundResolved = [];
+    for (const target of memory.outbound) {
+      const targetFile = resolve(target);
+      if (targetFile && targetFile !== memory.file) {
+        memory.outboundResolved.push({ target, file: targetFile });
+        edges.push({ from: memory.file, to: targetFile });
+        inbound.get(targetFile).push({ from: memory.file, target });
+      } else if (!targetFile) {
+        memory.outboundResolved.push({ target, file: null });
+        danglingWikilinks.push({ from: memory.file, fromName: memory.name, target });
+      }
+    }
+  }
+
+  for (const memory of memories) {
+    memory.ageDays = ageInDays(memory.modified);
+    memory.inbound = inbound.get(memory.file) || [];
+    memory.entry = index ? index.entries.find((e) => e.file === memory.file) || null : null;
+    memory.section = memory.entry ? memory.entry.section : null;
+    memory.status = indexedFiles.has(memory.file)
+      ? 'indexed'
+      : referencedFiles.has(memory.file)
+        ? 'referenced'
+        : 'orphan';
+  }
+
+  const existingFiles = new Set(files);
+  const danglingIndex = index
+    ? index.links
+        .filter((l) => !existingFiles.has(l.file))
+        .map((l) => ({ index: l.index, file: l.file, label: l.label, text: l.text }))
+    : [];
+
+  const health = {
+    orphans: memories.filter((m) => m.status === 'orphan').map((m) => m.file),
+    referencedOnly: memories.filter((m) => m.status === 'referenced').map((m) => m.file),
+    danglingIndex,
+    danglingWikilinks,
+    nameMismatches: memories
+      .filter((m) => !m.nameMatchesFile)
+      .map((m) => ({ file: m.file, name: m.name })),
+    missingFrontmatter: memories.filter((m) => !m.hasFrontmatter).map((m) => m.file),
+    longHooks: index ? indexStats(indexRaw, index.entries).longHooks : [],
+  };
+  // Must count every category the Health tab renders, or the badge disagrees
+  // with the list underneath it.
+  // One flat list is the single source of truth for both the badge and the tab.
+  // Keeping a separate count in sync with what the UI renders failed twice: a
+  // category counted but not rendered shows a badge over an empty tab.
+  health.issues = [
+    ...health.danglingIndex.map((entry) => ({ kind: 'dangling-index', severity: 'bad', entry })),
+    ...health.danglingWikilinks.map((link) => ({ kind: 'dangling-wikilink', severity: 'bad', link })),
+    ...health.orphans.map((file) => ({ kind: 'orphan', severity: 'warn', file })),
+    ...health.referencedOnly.map((file) => ({ kind: 'referenced-only', severity: 'warn', file })),
+    ...health.nameMismatches.map((mismatch) => ({ kind: 'name-mismatch', severity: 'warn', mismatch })),
+    ...health.missingFrontmatter.map((file) => ({ kind: 'missing-frontmatter', severity: 'warn', file })),
+    ...(health.longHooks.length
+      ? [{ kind: 'long-hooks', severity: 'warn', count: health.longHooks.length, longest: health.longHooks[0] }]
+      : []),
+  ];
+  health.issueCount = health.issues.length;
+
+  return {
+    slug,
+    path: resolved.path,
+    label: shortLabel(resolved.path),
+    resolvedBy: resolved.resolvedBy,
+    hasMemoryDir,
+    hasIndex: index !== null,
+    index: index
+      ? { raw: indexRaw, lines: index.parsedLines, entries: index.entries, inlineLinks: index.inlineLinks }
+      : null,
+    memories: memories.map(({ raw, ...rest }) => rest),
+    graph: {
+      nodes: memories.map((m) => ({
+        id: m.file,
+        label: m.name,
+        type: m.type,
+        status: m.status,
+        degree: m.inbound.length + m.outboundResolved.filter((o) => o.file).length,
+      })),
+      edges,
+      dangling: danglingWikilinks,
+    },
+    health,
+    stats: {
+      index: indexStats(indexRaw, index ? index.entries : []),
+      memoryBytes: memories.reduce((sum, m) => sum + m.bytes, 0),
+      memoryTokens: memories.reduce((sum, m) => sum + m.tokens, 0),
+    },
+    duplicates: findDuplicates(memories),
+    trash: listTrash(dir),
+  };
+}
+
+/** Restore records left behind by soft deletes, newest first. */
+export function listTrash(dir) {
+  const trashPath = path.join(dir, TRASH_DIR);
+  let entries;
+  try {
+    entries = fs.readdirSync(trashPath);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => name.endsWith('.restore.json'))
+    .map((name) => {
+      const record = readIfExists(path.join(trashPath, name));
+      if (!record) return null;
+      try {
+        const parsed = JSON.parse(record);
+        // Records written before batching had a single trashedFile at the root.
+        const entries = parsed.files?.length
+          ? parsed.files
+          : parsed.trashedFile
+            ? [{ file: parsed.memoryFile, trashedFile: parsed.trashedFile }]
+            : [];
+        const backups = [
+          ...entries.map((e) => e.trashedFile),
+          parsed.indexTrashedFile,
+          parsed.backupFile,
+        ].filter(Boolean);
+        return {
+          ...parsed,
+          kind: parsed.kind || 'memories',
+          files: entries,
+          label: parsed.label || parsed.name || parsed.memoryFile || parsed.id,
+          recordFile: name,
+          present: backups.length > 0 && backups.every((f) => fs.existsSync(path.join(trashPath, f))),
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
+}

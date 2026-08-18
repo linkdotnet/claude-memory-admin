@@ -1,0 +1,5 @@
+# `files` in package.json is the allowlist; this is a backstop for stray files.
+test/
+.github/
+*.log
+.DS_Store

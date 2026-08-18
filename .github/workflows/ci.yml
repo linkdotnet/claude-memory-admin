@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to the same branch makes an in-flight run redundant.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor is package.json's `engines`, plus current LTS and current.
+        node: ['20.6', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Catches a broken `files` list before it reaches npm, where a published
+      # version cannot be replaced.
+      - name: Check the published file list
+        run: npm pack --dry-run
+
+      - name: Verify the CLI runs from a packed install
+        run: |
+          set -euo pipefail
+          npm pack
+          npm install -g ./claude-memory-admin-*.tgz
+          claude-memory-admin --version
+          claude-memory-admin --help > /dev/null
+          # Start it against an empty store and confirm it serves the app and
+          # the two vendored browser bundles, which resolve differently once the
+          # package is installed globally and npm hoists dependencies.
+          mkdir -p /tmp/empty-store
+          claude-memory-admin --root /tmp/empty-store --port 4173 --no-open &
+          for _ in $(seq 1 40); do
+            curl -fsS -o /dev/null "http://localhost:4173/" && break || sleep 0.25
+          done
+          curl -fsS -o /dev/null "http://localhost:4173/"
+          curl -fsS -o /dev/null "http://localhost:4173/vendor/marked.js"
+          curl -fsS -o /dev/null "http://localhost:4173/vendor/purify.js"
+          curl -fsS -o /dev/null "http://localhost:4173/api/projects"

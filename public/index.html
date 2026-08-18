@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Memory Admin</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧠</text></svg>">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <header class="sidebar-head">
+      <button id="collapse" class="icon-btn" title="Hide the project list" aria-label="Hide the project list">&#9668;</button>
+      <h1>Memory Admin</h1>
+      <p id="root-path" class="muted mono"></p>
+      <input id="search" type="search" placeholder="Search all memories  ( / )" autocomplete="off" spellcheck="false">
+      <label class="toggle">
+        <input type="checkbox" id="show-all"> show projects without memory
+      </label>
+    </header>
+    <nav id="project-list" aria-label="Projects"></nav>
+    <footer class="sidebar-foot">
+      <a href="https://bitspire.ch/" target="_blank" rel="noopener noreferrer">
+        <span>Brought to you by</span>
+        <img src="/assets/bitspire-logo.webp" alt="BitSpire" width="96">
+      </a>
+    </footer>
+  </aside>
+
+  <button id="expand" class="expand-tab" title="Show the project list" aria-label="Show the project list" hidden>&#9658;</button>
+
+  <main id="main">
+    <div id="empty-state" class="empty">
+      <h2>Pick a project</h2>
+      <p>Each project keeps its memories in <code>~/.claude/projects/&lt;slug&gt;/memory/</code>, indexed by <code>MEMORY.md</code>.</p>
+    </div>
+
+    <div id="search-view" hidden>
+      <header id="search-head">
+        <h2 id="search-title"></h2>
+        <button id="search-clear" class="btn small">Clear</button>
+      </header>
+      <section id="search-results"></section>
+    </div>
+
+    <div id="project-view" hidden>
+      <header id="project-head">
+        <div class="project-head-row">
+          <h2 id="project-title"></h2>
+          <button id="delete-project" class="btn danger small">Delete all memory</button>
+        </div>
+        <p id="project-sub" class="muted mono"></p>
+        <div id="tabs" role="tablist"></div>
+      </header>
+      <section id="tab-content"></section>
+    </div>
+  </main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root" aria-live="polite"></div>
+
+<script type="module" src="/app.mjs"></script>
+</body>
+</html>
