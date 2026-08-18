@@ -1,0 +1,3 @@
+# Style
+
+Prefer early returns.

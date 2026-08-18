@@ -5,9 +5,9 @@ import { renderGraph } from '/graph.mjs';
 marked.setOptions({ gfm: true, breaks: false });
 
 const state = {
-  projects: [],
-  slug: null,
-  project: null,
+  stores: [],
+  storeId: null,
+  store: null,
   tab: 'memories',
   selected: null,
   showAll: false,
@@ -114,33 +114,59 @@ function renderBody(container, memory, project) {
 
 /* --------------------------------------------------------------- sidebar */
 
-function renderProjects() {
+/** The second line under a store's name: where it lives, in its own terms. */
+function storeSubtitle(store) {
+  if (store.kind === 'auto') return store.path;
+  const scope = store.kind === 'agent-user' ? 'user'
+    : store.kind === 'agent-project' ? 'project' : 'local';
+  return `${scope} · ${store.sublabel}`;
+}
+
+function storeButton(store) {
+  const health = store.memoryCount === 0 ? 'none' : 'ok';
+  const off = store.autoMemory && store.autoMemory.known && !store.autoMemory.enabled;
+  return node('button', {
+    class: `project${store.id === state.storeId ? ' active' : ''}${store.hasMemoryDir ? '' : ' dim'}`,
+    onclick: () => openStore(store.id),
+    title: store.kind === 'auto' && store.resolvedBy === 'unresolved'
+      ? 'Real path could not be resolved - showing the raw folder name'
+      : store.dir,
+  }, [
+    node('span', { class: 'project-row' }, [
+      node('span', { class: `dot ${health}` }),
+      node('span', { class: 'project-name', text: store.label }),
+      off ? node('span', { class: 'off-marker', text: 'off', title: 'Auto memory is disabled for this project' }) : null,
+      node('span', { class: 'project-count', text: store.hasMemoryDir ? String(store.memoryCount) : '-' }),
+    ]),
+    node('span', { class: 'project-path', text: storeSubtitle(store) }),
+  ]);
+}
+
+function renderStores() {
   const list = el('project-list');
   list.textContent = '';
 
-  const visible = state.projects.filter((p) => state.showAll || p.hasMemoryDir);
+  const visible = state.stores.filter((s) => state.showAll || s.hasMemoryDir);
   if (!visible.length) {
-    list.append(node('p', { class: 'muted', text: 'No projects found.', style: 'padding:12px' }));
+    list.append(node('p', { class: 'muted', text: 'No memory stores found.', style: 'padding:12px' }));
     return;
   }
 
-  for (const project of visible) {
-    const health = project.memoryCount === 0 ? 'none' : 'ok';
-    const button = node('button', {
-      class: `project${project.slug === state.slug ? ' active' : ''}${project.hasMemoryDir ? '' : ' dim'}`,
-      onclick: () => openProject(project.slug),
-      title: project.resolvedBy === 'unresolved'
-        ? 'Real path could not be resolved - showing the raw folder name'
-        : project.path,
-    }, [
-      node('span', { class: 'project-row' }, [
-        node('span', { class: `dot ${health}` }),
-        node('span', { class: 'project-name', text: project.label }),
-        node('span', { class: 'project-count', text: project.hasMemoryDir ? String(project.memoryCount) : '-' }),
-      ]),
-      node('span', { class: 'project-path', text: project.path }),
-    ]);
-    list.append(button);
+  // Subagent memory is a different thing from a project's auto memory - a
+  // different scope, written by a different agent - so it gets its own group
+  // rather than being mixed into the project list.
+  const groups = [
+    ['Projects', visible.filter((s) => s.kind === 'auto')],
+    ['Subagents', visible.filter((s) => s.kind !== 'auto')],
+  ];
+
+  for (const [title, stores] of groups) {
+    if (!stores.length) continue;
+    // With nothing to tell apart, a single heading is just noise.
+    if (groups.every(([, group]) => group.length) ) {
+      list.append(node('div', { class: 'sidebar-group', text: title }));
+    }
+    for (const store of stores) list.append(storeButton(store));
   }
 }
 
@@ -151,6 +177,7 @@ const TABS = [
   { id: 'index', label: 'MEMORY.md' },
   { id: 'graph', label: 'Graph' },
   { id: 'prune', label: 'Prune' },
+  { id: 'context', label: 'Context' },
   { id: 'health', label: 'Health' },
   { id: 'trash', label: 'Trash' },
 ];
@@ -158,12 +185,17 @@ const TABS = [
 function renderTabs() {
   const container = el('tabs');
   container.textContent = '';
+  const hasProjectDir = state.store.kind === 'auto'
+    ? state.store.resolvedBy !== 'unresolved'
+    : Boolean(state.store.projectPath);
+
   for (const tab of TABS) {
+    if (tab.id === 'context' && !hasProjectDir) continue;
     let badge = null;
-    if (tab.id === 'memories') badge = String(state.project.memories.length);
-    if (tab.id === 'health' && state.project.health.issueCount) badge = String(state.project.health.issueCount);
-    if (tab.id === 'trash' && state.project.trash.length) badge = String(state.project.trash.length);
-    if (tab.id === 'prune' && state.project.stats.index.overTarget) badge = '!';
+    if (tab.id === 'memories') badge = String(state.store.memories.length);
+    if (tab.id === 'health' && state.store.health.issueCount) badge = String(state.store.health.issueCount);
+    if (tab.id === 'trash' && state.store.trash.length) badge = String(state.store.trash.length);
+    if (tab.id === 'prune' && state.store.stats.index.overTarget) badge = '!';
 
     container.append(node('button', {
       class: `tab${state.tab === tab.id ? ' active' : ''}`,
@@ -194,7 +226,7 @@ function memoryButton(memory) {
 }
 
 function renderMemories(container) {
-  const project = state.project;
+  const project = state.store;
   if (!project.memories.length) {
     container.append(node('p', { class: 'muted', text: 'This project has no memory files yet.' }));
     return;
@@ -224,7 +256,7 @@ function renderDetail() {
   if (!host) return;
   host.textContent = '';
 
-  const memory = state.project.memories.find((m) => m.file === state.selected);
+  const memory = state.store.memories.find((m) => m.file === state.selected);
   if (!memory) {
     host.append(node('p', { class: 'muted', text: 'Select a memory to read it.' }));
     return;
@@ -247,7 +279,11 @@ function renderDetail() {
   const rows = [
     ['file', memory.file],
     ['status', memory.status],
-    ['modified', memory.modified ? memory.modified.replace('T', ' ').replace(/\..*$/, '') : '-'],
+    ['modified', memory.modified
+      // mtime is reset by any copy or restore, so a date that is only a file
+      // timestamp is weaker evidence than one Claude Code actually stamped.
+      ? `${memory.modified.replace('T', ' ').replace(/\..*$/, '')}${memory.modifiedFrom === 'mtime' ? '  (file mtime)' : ''}`
+      : '-'],
     ['size', `${(memory.bytes / 1024).toFixed(1)} KB`],
   ];
   if (!memory.nameMatchesFile) rows.push(['name', `${memory.name}  (differs from filename)`]);
@@ -261,7 +297,7 @@ function renderDetail() {
 
   const body = node('div', { class: 'body' });
   card.append(body);
-  renderBody(body, memory, state.project);
+  renderBody(body, memory, state.store);
 
   const outbound = memory.outboundResolved || [];
   if (outbound.length || memory.inbound.length) {
@@ -282,7 +318,7 @@ function renderDetail() {
       links.append(node('div', { class: 'section-label', text: 'Linked from' }));
       const chips = node('div', { class: 'links' });
       for (const link of memory.inbound) {
-        const source = state.project.memories.find((m) => m.file === link.from);
+        const source = state.store.memories.find((m) => m.file === link.from);
         chips.append(node('button', {
           class: 'chip',
           text: source ? source.name : link.from,
@@ -300,19 +336,27 @@ function renderDetail() {
 /* ----------------------------------------------------------- MEMORY.md */
 
 function renderIndex(container) {
-  const project = state.project;
+  const project = state.store;
   if (!project.hasIndex) {
     container.append(node('p', { class: 'muted', text: 'This project has no MEMORY.md.' }));
     return;
   }
 
   const missing = new Set(project.health.danglingIndex.map((d) => d.index));
+  const { cutoff } = project.stats.index;
   const card = node('div', { class: 'card' });
   card.append(node('p', { class: 'muted', style: 'margin-top:0', text: `${project.index.entries.length} index entries · ${project.index.lines.length} lines` }));
 
   for (const line of project.index.lines) {
+    // The cutoff is a raw line number, so it lands in the right place even
+    // though frontmatter and comments are stripped before the limit is measured.
+    if (cutoff && line.index === cutoff.rawLine) {
+      card.append(node('div', { class: 'cut-line' }, [
+        node('span', { class: 'cut-label', text: `not loaded past here — ${cutoff.droppedLines} lines dropped on ${cutoff.by}` }),
+      ]));
+    }
     const row = node('div', {
-      class: `index-line kind-${line.kind}${missing.has(line.index) ? ' dangling' : ''}`,
+      class: `index-line kind-${line.kind}${missing.has(line.index) ? ' dangling' : ''}${cutoff && line.index >= cutoff.rawLine ? ' beyond-cut' : ''}`,
     }, [
       node('span', { class: 'ln', text: String(line.index + 1) }),
       node('span', { class: 'content', text: line.text || ' ' }),
@@ -323,6 +367,100 @@ function renderIndex(container) {
     card.append(row);
   }
   container.append(card);
+}
+
+
+/* ------------------------------------------------------------- context */
+
+const SCOPE_ORDER = ['managed', 'user', 'project', 'local'];
+
+const CONTEXT_PROBLEMS = {
+  missing: (p) => ['Import does not resolve', `${p.spec} from ${p.from} - nothing at ${p.file}`],
+  'too-deep': (p) => ['Import chain is too deep', `${p.file} is a fifth hop; Claude Code follows four, so this never loads`],
+  cycle: (p) => ['Circular import', `${p.from} imports ${p.file}, which was already loaded`],
+  external: (p) => ['Import resolves outside the project', `${p.file} - Claude Code asks you to approve these once, and a declined one stays disabled silently`],
+  'invalid-glob': (p) => [`Rule matches nothing: ${p.pattern}`, `${p.file} - ${p.reason}`],
+  'glob-budget': (p) => ['Rule has too many brace expansions', `${p.file} expands to ${p.expansions} patterns, past the 1,000 budget, so it is used unexpanded and its literal braces match no file`],
+  'long-claude-md': (p) => [`${p.lines} lines, over the 200-line guidance`, `${p.file} - long files cost context every session and reduce adherence`],
+  'agents-md-not-imported': (p) => ['AGENTS.md is not loaded', `${p.file} exists, but Claude Code reads CLAUDE.md. Import it with @AGENTS.md, or symlink it.`],
+};
+
+async function renderContext(container) {
+  container.append(node('p', { class: 'muted', text: 'Reading instruction files…' }));
+  let data;
+  try {
+    data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/instructions`);
+  } catch (err) {
+    container.textContent = '';
+    return container.append(node('p', { class: 'muted', text: err.message }));
+  }
+  // The tab may have been switched while the request was in flight.
+  if (state.tab !== 'context') return;
+  container.textContent = '';
+
+  if (!data.projectDir) {
+    return container.append(node('p', { class: 'muted', text: 'This store is not tied to a project directory, so there are no instruction files to resolve.' }));
+  }
+
+  const { totals } = data;
+  container.append(node('div', { class: 'meter' }, [
+    node('div', { class: 'meter-top' }, [
+      node('span', { class: 'meter-value', text: `~${totals.alwaysTokens.toLocaleString()}` }),
+      node('span', { class: 'meter-unit', text: 'estimated tokens of instructions, every session' }),
+    ]),
+    node('div', { class: 'meter-facts' }, [
+      node('span', {}, [node('b', { text: String(totals.files) }), document.createTextNode(' files resolved')]),
+      node('span', {}, [node('b', { text: String(totals.alwaysLines) }), document.createTextNode(' lines always loaded')]),
+      node('span', {}, [node('b', { text: `${(totals.alwaysBytes / 1024).toFixed(1)} KB` }), document.createTextNode(' always loaded')]),
+      node('span', {}, [node('b', { text: String(totals.conditionalFiles) }), document.createTextNode(' path-scoped rules, loaded only on a match')]),
+    ]),
+    node('p', { class: 'meter-note', text: 'Unlike MEMORY.md, none of this is truncated: CLAUDE.md files load in full however long they are. The 200-line figure is Claude Code’s guidance, not a cutoff, because long files cost context every session and are followed less reliably.' }),
+  ]));
+
+  if (data.problems.length) {
+    container.append(node('div', { class: 'section-label', text: `Problems · ${data.problems.length}` }));
+    for (const problem of data.problems) {
+      const describe = CONTEXT_PROBLEMS[problem.kind];
+      const [title, detail] = describe ? describe(problem) : [problem.kind, problem.file || ''];
+      const bad = problem.kind === 'missing' || problem.kind === 'invalid-glob' || problem.kind === 'glob-budget';
+      container.append(node('div', { class: `issue${bad ? ' bad' : ''}` }, [
+        node('div', { class: 'issue-body' }, [
+          node('div', { class: 'issue-title', text: title }),
+          node('div', { class: 'issue-detail', text: detail }),
+        ]),
+      ]));
+    }
+  }
+
+  container.append(node('div', { class: 'section-label', text: `Loaded in this order · ${data.files.length}` }));
+  const card = node('div', { class: 'card' });
+  for (const file of data.files) {
+    const tags = [node('span', { class: `badge scope-${file.scope}`, text: file.scope })];
+    if (file.kind === 'import') tags.push(node('span', { class: 'badge', text: `import · depth ${file.depth}` }));
+    if (file.kind === 'rule') tags.push(node('span', { class: 'badge', text: 'rule' }));
+    if (file.kind === 'managed-settings') tags.push(node('span', { class: 'badge', text: 'claudeMd setting' }));
+    if (file.conditional) tags.push(node('span', { class: 'badge status-referenced', text: 'only on a path match' }));
+
+    card.append(node('div', { class: 'ctx-row' }, [
+      node('div', { class: 'ctx-main' }, [
+        node('div', { class: 'ctx-tags' }, tags),
+        node('div', { class: 'ctx-file', text: file.file }),
+      ]),
+      node('div', { class: 'ctx-size', text: `${file.lines} L · ~${file.tokens.toLocaleString()} tok` }),
+    ]));
+  }
+  container.append(card);
+
+  if (data.excluded.length) {
+    container.append(node('div', { class: 'section-label', text: `Excluded by claudeMdExcludes · ${data.excluded.length}` }));
+    for (const file of data.excluded) {
+      container.append(node('div', { class: 'issue' }, [
+        node('div', { class: 'issue-body' }, [node('div', { class: 'issue-detail', text: file })]),
+      ]));
+    }
+  }
+
+  container.append(node('p', { class: 'meter-note', text: 'This is re-derived from the documented resolution rules, not a report from Claude Code. Run /context in a session to see what it actually loaded.' }));
 }
 
 /* -------------------------------------------------------------- health */
@@ -339,7 +477,7 @@ function issue(title, detail, { bad = false, action, secondary } = {}) {
 }
 
 function renderHealth(container) {
-  const { health, memories } = state.project;
+  const { health, memories } = state.store;
   if (!health.issues.length) {
     container.append(node('div', { class: 'card' }, [
       node('p', { style: 'margin:0', text: '\u2713 No consistency problems found.' }),
@@ -369,12 +507,12 @@ function renderIssue(item, memories) {
           run: async () => {
             if (!confirm(`Remove line ${entry.index + 1} from MEMORY.md?\n\n${entry.text}`)) return;
             try {
-              await api(`/api/projects/${encodeURIComponent(state.slug)}/index-line/delete`, {
+              await api(`/api/stores/${encodeURIComponent(state.storeId)}/index-line/delete`, {
                 method: 'POST',
                 body: JSON.stringify({ lineIndex: entry.index, expectedText: entry.text }),
               });
               toast('Pointer removed');
-              await openProject(state.slug, { keepTab: true });
+              await openStore(state.storeId, { keepTab: true });
             } catch (err) {
               toast(err.message, { error: true });
             }
@@ -397,11 +535,11 @@ function renderIssue(item, memories) {
           run: async () => {
             if (!confirm(`Remove [[${link.target}]] from ${link.from}?\n\nThe link markup goes, the words stay:\n  "see [[${link.target}]]"  ->  "see ${link.target}"\n\nA copy of the file is kept in the trash, so this can be undone.`)) return;
             try {
-              const result = await api(`/api/projects/${encodeURIComponent(state.slug)}/wikilink/remove`, {
+              const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/wikilink/remove`, {
                 method: 'POST',
                 body: JSON.stringify({ file: link.from, target: link.target }),
               });
-              await openProject(state.slug, { keepTab: true });
+              await openStore(state.storeId, { keepTab: true });
               toast(`Unlinked ${result.occurrences} reference(s)`, {
                 action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
               });
@@ -467,11 +605,11 @@ function renderIssue(item, memories) {
 
 async function restoreFromTrash(id) {
   try {
-    const result = await api(`/api/projects/${encodeURIComponent(state.slug)}/restore`, {
+    const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/restore`, {
       method: 'POST',
       body: JSON.stringify({ id }),
     });
-    await openProject(state.slug, { keepTab: true });
+    await openStore(state.storeId, { keepTab: true });
     toast(result.indexRestored === 'appended'
       ? 'Restored, but MEMORY.md had changed - the index line was appended at the end'
       : 'Restored');
@@ -483,7 +621,7 @@ async function restoreFromTrash(id) {
 /* --------------------------------------------------------------- trash */
 
 function renderTrash(container) {
-  const trash = state.project.trash;
+  const trash = state.store.trash;
   if (!trash.length) {
     container.append(node('p', { class: 'muted', text: 'Nothing in the trash. Deleted memories land here and can be restored.' }));
     return;
@@ -514,7 +652,7 @@ function closeModal() {
 async function openDeleteDialog(file) {
   let preview;
   try {
-    preview = await api(`/api/projects/${encodeURIComponent(state.slug)}/delete-preview`, {
+    preview = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete-preview`, {
       method: 'POST',
       body: JSON.stringify({ file }),
     });
@@ -606,12 +744,12 @@ async function openDeleteDialog(file) {
         onclick: async () => {
           closeModal();
           try {
-            const result = await api(`/api/projects/${encodeURIComponent(state.slug)}/delete`, {
+            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete`, {
               method: 'POST',
               body: JSON.stringify({ file, alsoDelete: [...cascade] }),
             });
             if (state.selected === file || cascade.has(state.selected)) state.selected = null;
-            await openProject(state.slug, { keepTab: true });
+            await openStore(state.storeId, { keepTab: true });
             const count = result.record.files.length;
             toast(count > 1 ? `Deleted ${count} memories` : `Deleted "${result.record.label || file}"`, {
               action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
@@ -634,16 +772,85 @@ async function openDeleteDialog(file) {
   }
 }
 
-async function openProjectDeleteDialog() {
+/**
+ * Name a store whose transcripts have aged out.
+ *
+ * Claude Code sweeps session transcripts on a retention period but keeps memory
+ * forever, so the evidence that names a store expires while the store does not.
+ * This is the only thing in the app that writes outside a memory directory, so
+ * it happens only when asked for, and says so.
+ */
+function openRememberPathDialog() {
+  const store = state.store;
+  const input = node('input', {
+    type: 'text',
+    class: 'path-input',
+    value: store.guess || '',
+    placeholder: '/Users/you/repos/the-project',
+    spellcheck: 'false',
+  });
+
+  const body = node('div', { class: 'modal-body' }, [
+    node('p', { class: 'muted', style: 'margin-top:0', text: `The folder on disk is "${store.slug}", and its name is a lossy encoding of a path. No session transcript remains to recover the real one from, so tell it once and it will be used from now on.` }),
+    input,
+    node('p', { class: 'muted', style: 'margin-bottom:0;font-size:12.5px', text: 'Saved to ~/.claude-memory-admin/paths.json. That file records slugs and folder paths only, never memory content, and is the one thing this app writes outside a memory/ directory.' }),
+  ]);
+
+  const modal = node('div', { class: 'modal' }, [
+    node('header', {}, [node('h3', { text: 'Remember this project\u2019s path' })]),
+    body,
+    node('footer', {}, [
+      node('button', { class: 'btn', text: 'Cancel', onclick: closeModal }),
+      node('button', {
+        class: 'btn primary',
+        text: 'Remember',
+        onclick: async () => {
+          const value = input.value.trim();
+          if (!value) return;
+          try {
+            await api(`/api/stores/${encodeURIComponent(state.storeId)}/path/remember`, {
+              method: 'POST',
+              body: JSON.stringify({ path: value }),
+            });
+          } catch (err) {
+            return toast(err.message, { error: true });
+          }
+          closeModal();
+          await reloadStores();
+          await openStore(state.storeId, { keepTab: true });
+          toast(`Remembered ${value}`);
+        },
+      }),
+    ]),
+  ]);
+
+  const backdrop = node('div', { class: 'modal-backdrop', onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
+  el('modal-root').append(backdrop);
+  input.focus();
+  input.select();
+}
+
+async function forgetProjectPath() {
+  try {
+    await api(`/api/stores/${encodeURIComponent(state.storeId)}/path/forget`, { method: 'POST' });
+  } catch (err) {
+    return toast(err.message, { error: true });
+  }
+  await reloadStores();
+  await openStore(state.storeId, { keepTab: true });
+  toast('Forgot the remembered path');
+}
+
+async function openStoreDeleteDialog() {
   let preview;
   try {
-    preview = await api(`/api/projects/${encodeURIComponent(state.slug)}/project/delete-preview`, { method: 'POST' });
+    preview = await api(`/api/stores/${encodeURIComponent(state.storeId)}/project/delete-preview`, { method: 'POST' });
   } catch (err) {
     return toast(err.message, { error: true });
   }
 
   if (!preview.files.length && !preview.hasIndex) {
-    return toast('This project has no memory to delete');
+    return toast('This store has no memory to delete');
   }
 
   const body = node('div', { class: 'modal-body' });
@@ -658,14 +865,21 @@ async function openProjectDeleteDialog() {
 
   body.append(node('div', { class: 'will' }, [
     node('div', { class: 'will-title', text: 'Will be kept' }),
-    node('div', { class: 'will-item keep', text: 'Session transcripts (*.jsonl) and the project folder itself' }),
+    node('div', { class: 'will-item keep', text: state.store.kind === 'auto'
+      ? 'Session transcripts (*.jsonl) and the project folder itself'
+      : 'The agent-memory folder itself, and every other agent\u2019s memory' }),
   ]));
 
-  body.append(node('p', { class: 'muted', style: 'margin:0;font-size:12.5px', text: 'Everything moves to memory/.trash/ as one restore point, so the whole project can be put back in a single step from the Trash tab.' }));
+  body.append(node('p', { class: 'muted', style: 'margin:0;font-size:12.5px', text: 'Everything moves to .trash/ inside the store as one restore point, so it can be put back in a single step from the Trash tab.' }));
+
+  // A project-scoped agent store is committed, so this is a working-tree change.
+  if (state.store.kind === 'agent-project') {
+    body.append(node('p', { class: 'sub-warn', style: 'margin:8px 0 0', text: 'This store is checked into the repository. Deleting from it changes tracked files, and will show up in git status.' }));
+  }
 
   const modal = node('div', { class: 'modal' }, [
     node('header', {}, [
-      node('h3', { text: `Delete all memory for ${state.project.label}?` }),
+      node('h3', { text: `Delete all memory for ${state.store.label}?` }),
       node('p', { class: 'muted', style: 'margin:0;font-size:13px', text: `${preview.files.length} memories${preview.hasIndex ? ' + MEMORY.md' : ''}` }),
     ]),
     body,
@@ -677,10 +891,10 @@ async function openProjectDeleteDialog() {
         onclick: async () => {
           closeModal();
           try {
-            const result = await api(`/api/projects/${encodeURIComponent(state.slug)}/project/delete`, { method: 'POST' });
+            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/project/delete`, { method: 'POST' });
             state.selected = null;
-            await openProject(state.slug, { keepTab: true });
-            toast(`Cleared ${state.project.label}`, {
+            await openStore(state.storeId, { keepTab: true });
+            toast(`Cleared ${state.store.label}`, {
               action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
             });
           } catch (err) {
@@ -728,7 +942,7 @@ const PRUNE_SORTS = {
 };
 
 function renderBudget(container) {
-  const { index } = state.project.stats;
+  const { index } = state.store.stats;
   const percent = Math.min(100, index.worstPercent);
   const level = index.level === 'over' ? 'way-over' : index.level === 'near' ? 'over' : '';
 
@@ -737,6 +951,28 @@ function renderBudget(container) {
     : index.level === 'near'
       ? 'Approaching the limit. Once MEMORY.md passes it, everything after the cutoff stops being loaded at all.'
       : 'Comfortably inside the limit. MEMORY.md is loaded at the start of every session.';
+
+  if (index.cutoff) {
+    const dropped = index.cutoff.droppedEntries;
+    const box = node('div', { class: 'cut-summary' });
+    box.append(node('div', { class: 'cut-summary-head', text: dropped.length
+      ? `${dropped.length} ${dropped.length === 1 ? 'memory is' : 'memories are'} past the cutoff and not loaded`
+      : `${index.cutoff.droppedLines} lines are past the cutoff and not loaded` }));
+    box.append(node('p', { class: 'muted', text: `MEMORY.md stops loading at line ${index.cutoff.rawLine + 1}, bounded by ${index.cutoff.by}. Claude cannot see anything below it.` }));
+    for (const entry of dropped.slice(0, 20)) {
+      box.append(node('div', { class: 'issue' }, [
+        node('div', { class: 'issue-body' }, [
+          node('div', { class: 'issue-title', text: entry.title || entry.file }),
+          node('div', { class: 'issue-detail', text: `MEMORY.md line ${entry.index + 1} · ${entry.file}` }),
+        ]),
+        node('button', { class: 'btn small', text: 'Open', onclick: () => selectMemory(entry.file) }),
+      ]));
+    }
+    if (dropped.length > 20) {
+      box.append(node('p', { class: 'muted', text: `${dropped.length - 20} more not listed.` }));
+    }
+    container.append(box);
+  }
 
   container.append(node('div', { class: 'meter' }, [
     node('div', { class: 'meter-top' }, [
@@ -758,7 +994,7 @@ function renderBudget(container) {
 }
 
 function renderPrune(container) {
-  const project = state.project;
+  const project = state.store;
   renderBudget(container);
 
   if (!project.memories.length) {
@@ -867,7 +1103,7 @@ function renderPrune(container) {
 
 async function openBulkDeleteDialog(files) {
   if (!files.length) return;
-  const memories = files.map((file) => state.project.memories.find((m) => m.file === file)).filter(Boolean);
+  const memories = files.map((file) => state.store.memories.find((m) => m.file === file)).filter(Boolean);
 
   const body = node('div', { class: 'modal-body' });
   const removals = node('div', { class: 'will' }, [node('div', { class: 'will-title', text: `${memories.length} memories will be trashed` })]);
@@ -903,13 +1139,13 @@ async function openBulkDeleteDialog(files) {
         onclick: async () => {
           closeModal();
           try {
-            const result = await api(`/api/projects/${encodeURIComponent(state.slug)}/delete-many`, {
+            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete-many`, {
               method: 'POST',
               body: JSON.stringify({ files, label: `${memories.length} pruned memories` }),
             });
             state.pruneSelection.clear();
             if (doomed.has(state.selected)) state.selected = null;
-            await openProject(state.slug, { keepTab: true });
+            await openStore(state.storeId, { keepTab: true });
             toast(`Deleted ${memories.length} memories`, {
               action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
             });
@@ -958,19 +1194,21 @@ function renderSearch() {
     ? `${data.total} result${data.total === 1 ? '' : 's'} for "${state.query.trim()}"`
     : `No results for "${state.query.trim()}"`;
 
-  if (!data.total && !data.projects.length) {
+  if (!data.total && !data.stores.length) {
     host.append(node('p', { class: 'muted', text: 'Nothing matched. Every word has to appear somewhere in a memory, so try fewer words.' }));
     return;
   }
 
-  for (const group of data.projects) {
+  for (const group of data.stores) {
     const block = node('div', { class: 'result-group' });
-    block.append(node('div', { class: 'section-label', text: `${group.label} · ${group.results.length}` }));
+    block.append(node('div', { class: 'section-label', text: group.sublabel
+      ? `${group.label} · ${group.sublabel} · ${group.results.length}`
+      : `${group.label} · ${group.results.length}` }));
 
     for (const result of group.results) {
       const button = node('button', {
         class: 'result',
-        onclick: () => openFromSearch(group.slug, result.file),
+        onclick: () => openFromSearch(group.id, result.file),
       });
       const top = node('div', { class: 'result-top' });
       const name = node('span', { class: 'result-name' });
@@ -991,7 +1229,7 @@ function renderSearch() {
     for (const hit of group.indexHits) {
       const button = node('button', {
         class: 'result',
-        onclick: () => openFromSearch(group.slug, hit.file, 'index'),
+        onclick: () => openFromSearch(group.id, hit.file, 'index'),
       });
       button.append(node('div', { class: 'result-where', text: `MEMORY.md line ${hit.index + 1}` }));
       const line = node('div', { class: 'result-snippet' });
@@ -1003,9 +1241,9 @@ function renderSearch() {
   }
 }
 
-async function openFromSearch(slug, file, tab = 'memories') {
+async function openFromSearch(id, file, tab = 'memories') {
   clearSearch();
-  if (slug !== state.slug) await openProject(slug);
+  if (id !== state.storeId) await openStore(id);
   state.tab = tab;
   if (file) state.selected = file;
   renderTabs();
@@ -1022,8 +1260,8 @@ function clearSearch() {
 function renderView() {
   const searching = state.search !== null;
   el('search-view').hidden = !searching;
-  el('project-view').hidden = searching || !state.project;
-  el('empty-state').hidden = searching || Boolean(state.project);
+  el('project-view').hidden = searching || !state.store;
+  el('empty-state').hidden = searching || Boolean(state.store);
   if (searching) renderSearch();
 }
 
@@ -1034,13 +1272,14 @@ function renderTab() {
   container.textContent = '';
   if (state.tab === 'memories') renderMemories(container);
   else if (state.tab === 'prune') renderPrune(container);
+  else if (state.tab === 'context') renderContext(container);
   else if (state.tab === 'index') renderIndex(container);
   else if (state.tab === 'health') renderHealth(container);
   else if (state.tab === 'trash') renderTrash(container);
   else if (state.tab === 'graph') {
     const wrap = node('div', { id: 'graph-wrap' });
     container.append(wrap);
-    renderGraph(wrap, state.project.graph, {
+    renderGraph(wrap, state.store.graph, {
       selected: state.selected,
       spread: state.spread,
       onSelect: (file) => selectMemory(file),
@@ -1065,34 +1304,87 @@ function selectMemory(file) {
   document.querySelector('.mem.active')?.scrollIntoView({ block: 'nearest' });
 }
 
-async function openProject(slug, { keepTab = false } = {}) {
-  if (slug !== state.slug) state.pruneSelection.clear();
-  state.slug = slug;
+/** Re-read the store list, e.g. after a path is remembered or forgotten. */
+async function reloadStores() {
+  const data = await api('/api/stores');
+  state.stores = data.stores;
+  renderStores();
+  return data;
+}
+
+/** The name and provenance line above the tabs, which differs by store kind. */
+function renderStoreHeader() {
+  const store = state.store;
+  el('project-title').textContent = store.label;
+
+  const sub = el('project-sub');
+  sub.textContent = '';
+
+  if (store.kind !== 'auto') {
+    const scope = store.kind === 'agent-user' ? 'user'
+      : store.kind === 'agent-project' ? 'project' : 'local';
+    sub.append(node('span', { text: store.dir }));
+    sub.append(node('span', { class: 'sub-note', text: `subagent memory, ${scope} scope` }));
+    // A project-scoped store is committed, so deleting from it edits the repo
+    // rather than a private cache. Worth saying before, not after.
+    if (store.kind === 'agent-project') {
+      sub.append(node('span', { class: 'sub-warn', text: 'checked into the repository - changes here show up in git status' }));
+    }
+    return;
+  }
+
+  sub.append(node('span', { text: store.resolvedBy === 'unresolved'
+    ? `${store.path}  (real path unresolved)`
+    : store.path }));
+
+  // One store serves every worktree and subdirectory of a repository, which is
+  // not obvious from a single path and changes what a memory here applies to.
+  const others = (store.workingDirs || []).filter((d) => d !== store.path);
+  if (others.length) {
+    sub.append(node('span', { class: 'sub-note', text: `also used from ${others.join(', ')}` }));
+  }
+  if (store.resolvedBy === 'unresolved') {
+    sub.append(node('button', { class: 'btn small link-btn', text: 'Remember path\u2026', onclick: openRememberPathDialog }));
+  } else if (store.resolvedBy === 'remembered') {
+    sub.append(node('span', { class: 'sub-note' }, [
+      document.createTextNode('path remembered, not recovered from a transcript  '),
+      node('button', { class: 'btn small link-btn', text: 'Forget', onclick: forgetProjectPath }),
+    ]));
+  }
+
+  const auto = store.autoMemory;
+  if (auto && auto.known && !auto.enabled) {
+    sub.append(node('span', { class: 'sub-warn', text: auto.scope === 'env'
+      ? 'auto memory is off (CLAUDE_CODE_DISABLE_AUTO_MEMORY) - this store will not grow'
+      : `auto memory is off (${auto.setBy}) - this store will not grow` }));
+  }
+}
+
+async function openStore(id, { keepTab = false } = {}) {
+  if (id !== state.storeId) state.pruneSelection.clear();
+  state.storeId = id;
   if (!keepTab) {
     state.tab = 'memories';
     state.selected = null;
   }
-  renderProjects();
+  renderStores();
 
   try {
-    state.project = await api(`/api/projects/${encodeURIComponent(slug)}`);
+    state.store = await api(`/api/stores/${encodeURIComponent(id)}`);
   } catch (err) {
     return toast(err.message, { error: true });
   }
 
-  if (state.selected && !state.project.memories.some((m) => m.file === state.selected)) {
+  if (state.selected && !state.store.memories.some((m) => m.file === state.selected)) {
     state.selected = null;
   }
 
-  el('project-title').textContent = state.project.label;
-  el('project-sub').textContent = state.project.resolvedBy === 'unresolved'
-    ? `${state.project.path}  (real path unresolved)`
-    : state.project.path;
+  renderStoreHeader();
 
   // Refresh the sidebar count in case a delete changed it.
-  const listed = state.projects.find((p) => p.slug === slug);
-  if (listed) listed.memoryCount = state.project.memories.length;
-  renderProjects();
+  const listed = state.stores.find((store) => store.id === id);
+  if (listed) listed.memoryCount = state.store.memories.length;
+  renderStores();
 
   renderView();
   renderTabs();
@@ -1110,20 +1402,20 @@ function setCollapsed(value) {
   applyCollapsed();
   // The graph sizes itself to the container, so it has to be redrawn once the
   // pane has actually changed width.
-  if (state.tab === 'graph' && state.project) requestAnimationFrame(renderTab);
+  if (state.tab === 'graph' && state.store) requestAnimationFrame(renderTab);
 }
 
 async function init() {
   el('show-all').addEventListener('change', (event) => {
     state.showAll = event.target.checked;
-    renderProjects();
+    renderStores();
   });
 
   el('search').addEventListener('input', (event) => scheduleSearch(event.target.value));
   el('search-clear').addEventListener('click', clearSearch);
   el('collapse').addEventListener('click', () => setCollapsed(true));
   el('expand').addEventListener('click', () => setCollapsed(false));
-  el('delete-project').addEventListener('click', openProjectDeleteDialog);
+  el('delete-project').addEventListener('click', openStoreDeleteDialog);
   document.addEventListener('keydown', (event) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
     if (event.key === '/' && !typing) {
@@ -1142,12 +1434,17 @@ async function init() {
   applyCollapsed();
 
   try {
-    const data = await api('/api/projects');
-    state.projects = data.projects;
+    const data = await reloadStores();
     el('root-path').textContent = data.root;
-    renderProjects();
-    const first = state.projects.find((p) => p.memoryCount > 0);
-    if (first) openProject(first.slug);
+    if (data.rootSource && data.rootSource !== 'default') {
+      el('root-path').title = data.rootFile
+        ? `autoMemoryDirectory set in ${data.rootFile}`
+        : 'store chosen with --root';
+      el('root-path').append(node('span', { class: 'root-source', text: data.rootSource }));
+    }
+    if (data.rootWarning) toast(data.rootWarning, { error: true });
+    const first = state.stores.find((store) => store.memoryCount > 0);
+    if (first) openStore(first.id);
   } catch (err) {
     toast(err.message, { error: true });
   }

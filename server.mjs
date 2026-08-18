@@ -8,8 +8,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-import { listProjects, projectsRoot } from './src/projects.mjs';
-import { buildProject } from './src/model.mjs';
+import { projectsRoot, resolveRoot } from './src/projects.mjs';
+import { buildStore } from './src/model.mjs';
+import { resolveInstructions } from './src/instructions.mjs';
+import { listStores } from './src/stores.mjs';
+import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
 import {
   deleteIndexLine,
@@ -106,71 +109,109 @@ function readBody(req) {
   });
 }
 
-/** A slug is only ever accepted if it names a directory we actually discovered. */
-function requireSlug(slug) {
-  const known = listProjects(ROOT).some((p) => p.slug === slug);
-  if (!known) throw new Error(`Unknown project: ${slug}`);
-  return slug;
+/**
+ * An id is only ever accepted if it names a store we actually discovered, which
+ * is what keeps a request from addressing a directory the app never found.
+ */
+function requireStore(id) {
+  const store = listStores(ROOT).find((candidate) => candidate.id === id);
+  if (!store) throw new Error(`Unknown store: ${id}`);
+  return store;
 }
 
 async function handleApi(req, res, url) {
   const segments = url.pathname.split('/').filter(Boolean); // ['api', 'projects', ...]
 
-  if (segments.length === 2 && segments[1] === 'projects' && req.method === 'GET') {
-    return sendJson(res, 200, { root: ROOT, projects: listProjects(ROOT) });
+  if (segments.length === 2 && segments[1] === 'stores' && req.method === 'GET') {
+    const origin = resolveRoot();
+    return sendJson(res, 200, {
+      root: ROOT,
+      // Which settings layer chose this store, so a non-default one is visible
+      // rather than something the user has to infer from unfamiliar contents.
+      rootSource: origin.path === ROOT ? origin.source : 'flag',
+      rootFile: origin.path === ROOT ? origin.file : null,
+      rootWarning: origin.invalid,
+      stores: listStores(ROOT),
+    });
   }
 
   if (segments.length === 2 && segments[1] === 'search' && req.method === 'GET') {
     return sendJson(res, 200, searchAll(ROOT, url.searchParams.get('q') || ''));
   }
 
-  if (segments[1] !== 'projects' || segments.length < 3) {
+  if (segments[1] !== 'stores' || segments.length < 3) {
     return sendJson(res, 404, { error: 'Unknown endpoint' });
   }
 
-  const slug = requireSlug(decodeURIComponent(segments[2]));
+  const store = requireStore(decodeURIComponent(segments[2]));
+  const dir = store.dir;
   const action = segments.slice(3).join('/');
 
   if (!action && req.method === 'GET') {
-    return sendJson(res, 200, buildProject(ROOT, slug));
+    return sendJson(res, 200, buildStore(store));
+  }
+
+  // What a session starting in this store's project would load as instructions.
+  // Read-only, and scoped to a directory the app already discovered rather than
+  // one named in the request.
+  if (action === 'instructions' && req.method === 'GET') {
+    const projectDir = store.kind === 'auto'
+      ? (store.pathExists ? store.path : null)
+      : store.projectPath;
+    if (!projectDir) return sendJson(res, 200, { projectDir: null, files: [], problems: [], excluded: [], totals: null });
+    return sendJson(res, 200, resolveInstructions(projectDir));
   }
 
   if (action === 'delete-preview' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, deletePreview(ROOT, slug, body.file));
+    return sendJson(res, 200, deletePreview(dir, body.file));
   }
 
   if (action === 'delete' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, deleteMemory(ROOT, slug, body.file, body.alsoDelete || []));
+    return sendJson(res, 200, deleteMemory(dir, body.file, body.alsoDelete || []));
   }
 
   if (action === 'delete-many' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, deleteMemories(ROOT, slug, body.files || [], { label: body.label || null }));
+    return sendJson(res, 200, deleteMemories(dir, body.files || [], { label: body.label || null }));
   }
 
   if (action === 'project/delete-preview' && req.method === 'POST') {
-    return sendJson(res, 200, projectDeletePreview(ROOT, slug));
+    return sendJson(res, 200, projectDeletePreview(dir));
   }
 
   if (action === 'project/delete' && req.method === 'POST') {
-    return sendJson(res, 200, deleteProject(ROOT, slug));
+    return sendJson(res, 200, deleteProject(dir));
   }
 
   if (action === 'wikilink/remove' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, removeWikilink(ROOT, slug, body.file, body.target));
+    return sendJson(res, 200, removeWikilink(dir, body.file, body.target));
   }
 
   if (action === 'restore' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, restoreMemory(ROOT, slug, body.id));
+    return sendJson(res, 200, restoreMemory(dir, body.id));
+  }
+
+  // The only write outside a memory directory, and only ever on request: it
+  // records a path the user confirmed so the store keeps its name after Claude
+  // Code sweeps the transcripts that proved it.
+  if (action === 'path/remember' && req.method === 'POST') {
+    if (store.kind !== 'auto') throw new Error('Only project stores have a path to remember');
+    const body = await readBody(req);
+    return sendJson(res, 200, rememberPath(store.slug, body.path));
+  }
+
+  if (action === 'path/forget' && req.method === 'POST') {
+    if (store.kind !== 'auto') throw new Error('Only project stores have a path to remember');
+    return sendJson(res, 200, forgetPath(store.slug));
   }
 
   if (action === 'index-line/delete' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, deleteIndexLine(ROOT, slug, body.lineIndex, body.expectedText));
+    return sendJson(res, 200, deleteIndexLine(dir, body.lineIndex, body.expectedText));
   }
 
   return sendJson(res, 404, { error: 'Unknown endpoint' });

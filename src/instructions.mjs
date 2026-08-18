@@ -1,0 +1,423 @@
+// What Claude Code actually loads as instructions when a session starts in a
+// directory: the CLAUDE.md chain, the files those import, and `.claude/rules/`.
+//
+// This is the other half of the startup context. MEMORY.md has a hard limit and
+// this side does not, but the two are spent from the same budget, and the rules
+// that decide which files load are fiddly enough that people are routinely
+// surprised. Everything here is READ ONLY.
+//
+// The resolution is a re-derivation of documented behaviour, not a report from
+// Claude Code itself. Where a rule is subtle - imports inside code spans do not
+// count, a `paths:` glob with an unbalanced bracket matches nothing - the
+// subtlety is implemented rather than smoothed over, because smoothing over it
+// would hide exactly the problem this is meant to surface.
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parseFrontmatter } from './parse.mjs';
+import { estimateTokens } from './stats.mjs';
+import { lookup, settingsLayers } from './settings.mjs';
+
+/** Claude Code's own guidance for a CLAUDE.md. Guidance, not a cutoff. */
+export const CLAUDE_MD_TARGET_LINES = 200;
+
+/** An import chain deeper than this is not followed. */
+export const MAX_IMPORT_DEPTH = 4;
+
+/** A rule's whole `paths:` list shares this budget of expanded patterns. */
+export const BRACE_PATTERN_BUDGET = 1000;
+
+function managedClaudeMd() {
+  if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode/CLAUDE.md';
+  if (process.platform === 'win32') return 'C:\\Program Files\\ClaudeCode\\CLAUDE.md';
+  return '/etc/claude-code/CLAUDE.md';
+}
+
+function readIfFile(file) {
+  try {
+    if (!fs.statSync(file).isFile()) return null;
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ imports */
+
+/**
+ * Blank out fenced code blocks and code spans, keeping the byte length so every
+ * offset still lines up with the original.
+ *
+ * Import parsing skips both, which is the documented way to write `@README` in a
+ * CLAUDE.md without importing it. Scanning the raw text instead would report
+ * imports that never happen, and the file being wrong about its own examples is
+ * worse than not checking.
+ */
+export function maskCode(text) {
+  const blank = (match) => match.replace(/[^\n]/g, ' ');
+  return text
+    .replace(/^[ \t]*(```|~~~)[\s\S]*?^[ \t]*\1[ \t]*$/gm, blank)
+    .replace(/`+[^`\n]*`+/g, blank);
+}
+
+// A bare @ that is part of an email address or an npm scope is not an import,
+// so the character before it has to be a boundary.
+const IMPORT = /(^|[\s(<'"])@((?:~\/|\.{0,2}\/)?[A-Za-z0-9._~\-][A-Za-z0-9._~\-/]*)/g;
+
+/** Every `@path` import in a file's text, with the offset it was found at. */
+export function findImports(text) {
+  const masked = maskCode(text);
+  const found = [];
+  for (const match of masked.matchAll(IMPORT)) {
+    const end = match.index + match[0].length;
+    // "@team@example.com" opens with something that looks exactly like an
+    // import until the second @ arrives.
+    if (masked[end] === '@') continue;
+    found.push({ spec: match[2], index: match.index + match[1].length });
+  }
+  return found;
+}
+
+function resolveImport(spec, fromFile) {
+  if (spec.startsWith('~/')) return path.join(os.homedir(), spec.slice(2));
+  if (path.isAbsolute(spec)) return spec;
+  // Relative to the file holding the import, not to the working directory.
+  return path.resolve(path.dirname(fromFile), spec);
+}
+
+/**
+ * Follow a file's imports, breadth-first, to the documented maximum depth.
+ *
+ * Returns every file reached and every import that did not work out. A cycle is
+ * reported once and not followed, because a file importing itself back is a
+ * mistake worth naming rather than a loop worth running.
+ */
+export function expandImports(rootFile, rootText, { projectDir = null } = {}) {
+  const files = [];
+  const problems = [];
+  const seen = new Set([rootFile]);
+  let frontier = [{ file: rootFile, text: rootText, depth: 0 }];
+
+  while (frontier.length) {
+    const next = [];
+    for (const current of frontier) {
+      for (const { spec } of findImports(current.text)) {
+        const resolved = resolveImport(spec, current.file);
+
+        if (current.depth + 1 > MAX_IMPORT_DEPTH) {
+          problems.push({ kind: 'too-deep', spec, from: current.file, file: resolved });
+          continue;
+        }
+        if (seen.has(resolved)) {
+          problems.push({ kind: 'cycle', spec, from: current.file, file: resolved });
+          continue;
+        }
+
+        const text = readIfFile(resolved);
+        if (text === null) {
+          problems.push({ kind: 'missing', spec, from: current.file, file: resolved });
+          continue;
+        }
+
+        seen.add(resolved);
+        // An import resolving outside the project is the kind Claude Code asks
+        // you to approve once; a declined one then stays silently disabled.
+        const external = projectDir ? path.relative(projectDir, resolved).startsWith('..') : false;
+        const entry = { file: resolved, text, depth: current.depth + 1, importedBy: current.file, external };
+        files.push(entry);
+        if (external) problems.push({ kind: 'external', spec, from: current.file, file: resolved });
+        next.push(entry);
+      }
+    }
+    frontier = next;
+  }
+
+  return { files, problems };
+}
+
+/* -------------------------------------------------------------------- globs */
+
+/**
+ * Check a `paths:` glob the way it will actually behave.
+ *
+ * Two documented failure modes make a rule silently inert, and both look
+ * completely normal in the file:
+ *   - a `[` that cannot be read as a bracket expression makes the pattern match
+ *     nothing at all;
+ *   - brace expansion past the budget makes the pattern get used unexpanded, so
+ *     its literal braces match no file either.
+ */
+export function checkGlob(pattern) {
+  let expansions = 1;
+  for (const group of pattern.matchAll(/\{([^{}]*)\}/g)) {
+    expansions *= group[1].split(',').length;
+  }
+
+  // Walk the pattern looking for a bracket expression that never closes.
+  let open = -1;
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === '\\') { i += 1; continue; }
+    if (pattern[i] === '[' && open === -1) open = i;
+    else if (pattern[i] === ']' && open !== -1 && i > open + 1) open = -1;
+  }
+
+  if (open !== -1) {
+    return { pattern, expansions, valid: false, reason: 'unclosed [ - glob syntax reads it as a bracket expression, so the pattern matches nothing' };
+  }
+  return { pattern, expansions, valid: true, reason: null };
+}
+
+/** Whether a rule's whole `paths:` list fits the shared expansion budget. */
+export function checkGlobList(patterns) {
+  const checks = patterns.map(checkGlob);
+  // Patterns without braces do not count against the budget.
+  const total = checks.reduce((sum, check) => sum + (check.expansions > 1 ? check.expansions : 0), 0);
+  return {
+    checks,
+    expansions: total,
+    overBudget: total > BRACE_PATTERN_BUDGET,
+  };
+}
+
+/* -------------------------------------------------------------------- rules */
+
+function listRuleFiles(dir, { depth = 8, seenReal = new Set() } = {}) {
+  let real;
+  try {
+    real = fs.realpathSync(dir);
+  } catch {
+    return [];
+  }
+  // Symlinked rule directories are supported, and circular ones must not hang.
+  if (seenReal.has(real) || depth < 0) return [];
+  seenReal.add(real);
+
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const out = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const full = path.join(dir, entry.name);
+    let stat;
+    try {
+      stat = fs.statSync(full); // follows symlinks, which is the point
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) out.push(...listRuleFiles(full, { depth: depth - 1, seenReal }));
+    else if (entry.name.endsWith('.md')) out.push(full);
+  }
+  return out;
+}
+
+function unquote(value) {
+  const trimmed = value.trim();
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if (trimmed.length >= 2 && ((first === '"' && last === '"') || (first === "'" && last === "'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+/**
+ * The `paths:` patterns of a rule, read straight from the frontmatter block.
+ *
+ * The frontmatter reader shared with memory files models scalars and one level
+ * of nesting, which is everything memory frontmatter uses and not a YAML list.
+ * Rather than widen a parser the whole app depends on, the one construct rules
+ * need is read here.
+ */
+export function readPathsList(frontmatterRaw) {
+  const patterns = [];
+  let inPaths = false;
+
+  for (const line of frontmatterRaw.split('\n')) {
+    const key = line.match(/^([A-Za-z0-9_.\-]+):[ \t]*(.*)$/);
+    if (key) {
+      inPaths = key[1] === 'paths';
+      if (!inPaths) continue;
+      const value = key[2].trim();
+      if (value.startsWith('[') && value.endsWith(']')) {
+        for (const part of value.slice(1, -1).split(',')) {
+          const pattern = unquote(part);
+          if (pattern) patterns.push(pattern);
+        }
+        inPaths = false;
+      } else if (value) {
+        patterns.push(unquote(value));
+        inPaths = false;
+      }
+      continue;
+    }
+    if (!inPaths) continue;
+    const item = line.match(/^[ \t]*-[ \t]+(.*)$/);
+    if (item) {
+      const pattern = unquote(item[1]);
+      if (pattern) patterns.push(pattern);
+    }
+  }
+  return patterns;
+}
+
+function ruleEntry(file, scope) {
+  const text = readIfFile(file);
+  if (text === null) return null;
+  const { raw } = parseFrontmatter(text);
+  const patterns = readPathsList(raw);
+
+  return {
+    file,
+    scope,
+    kind: 'rule',
+    text,
+    conditional: patterns.length > 0,
+    globs: patterns.length ? checkGlobList(patterns) : null,
+  };
+}
+
+/* ------------------------------------------------------------------ loading */
+
+function entry(file, scope, kind, { conditional = false } = {}) {
+  const text = readIfFile(file);
+  return text === null ? null : { file, scope, kind, text, conditional, globs: null };
+}
+
+/** Directories from the filesystem root down to `dir`, in load order. */
+function ancestors(dir) {
+  const parts = path.resolve(dir).split(path.sep);
+  const out = [];
+  for (let i = 1; i < parts.length; i++) {
+    out.push(parts.slice(0, i + 1).join(path.sep) || path.sep);
+  }
+  return out;
+}
+
+function globToRegExp(pattern) {
+  // Only used for claudeMdExcludes, which matches absolute paths.
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === '*') {
+      if (pattern[i + 1] === '*') { out += '.*'; i += 1; if (pattern[i + 1] === '/') i += 1; }
+      else out += '[^/]*';
+    } else if (char === '?') out += '[^/]';
+    else out += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/**
+ * Everything that would load for a session started in `projectDir`, in the order
+ * Claude Code loads it: broadest scope first, so the most specific instruction is
+ * the last thing read.
+ */
+export function resolveInstructions(projectDir) {
+  const home = os.homedir();
+  const layers = settingsLayers({ projectDir });
+  const excludeFound = lookup(layers, 'claudeMdExcludes');
+  const excludes = Array.isArray(excludeFound?.value) ? excludeFound.value.map(String) : [];
+  const excluded = [];
+
+  const candidates = [];
+  candidates.push(entry(managedClaudeMd(), 'managed', 'claude-md'));
+
+  const managedInline = lookup(layers, 'claudeMd');
+  const inline = typeof managedInline?.value === 'string' && managedInline.value.trim()
+    && (managedInline.scope === 'managed')
+    ? { file: managedInline.file, scope: 'managed', kind: 'managed-settings', text: managedInline.value, conditional: false, globs: null }
+    : null;
+  if (inline) candidates.push(inline);
+
+  candidates.push(entry(path.join(home, '.claude', 'CLAUDE.md'), 'user', 'claude-md'));
+  for (const file of listRuleFiles(path.join(home, '.claude', 'rules'))) {
+    candidates.push(ruleEntry(file, 'user'));
+  }
+
+  // Root-to-cwd, CLAUDE.md then CLAUDE.local.md at each level.
+  for (const dir of ancestors(projectDir)) {
+    candidates.push(entry(path.join(dir, 'CLAUDE.md'), 'project', 'claude-md'));
+    candidates.push(entry(path.join(dir, 'CLAUDE.local.md'), 'local', 'claude-md'));
+  }
+  candidates.push(entry(path.join(projectDir, '.claude', 'CLAUDE.md'), 'project', 'claude-md'));
+  for (const file of listRuleFiles(path.join(projectDir, '.claude', 'rules'))) {
+    candidates.push(ruleEntry(file, 'project'));
+  }
+
+  const matchers = excludes.map(globToRegExp);
+  const loaded = [];
+  const problems = [];
+
+  for (const candidate of candidates.filter(Boolean)) {
+    // Managed policy cannot be excluded; that is the point of managed policy.
+    if (candidate.scope !== 'managed' && matchers.some((re) => re.test(candidate.file))) {
+      excluded.push(candidate.file);
+      continue;
+    }
+    loaded.push(candidate);
+
+    if (candidate.kind === 'managed-settings') continue;
+    const expanded = expandImports(candidate.file, candidate.text, { projectDir });
+    problems.push(...expanded.problems.map((p) => ({ ...p, scope: candidate.scope })));
+    for (const imported of expanded.files) {
+      loaded.push({
+        file: imported.file,
+        scope: candidate.scope,
+        kind: 'import',
+        text: imported.text,
+        conditional: candidate.conditional,
+        globs: null,
+        importedBy: imported.importedBy,
+        depth: imported.depth,
+        external: imported.external,
+      });
+    }
+  }
+
+  // AGENTS.md is read by other tools, not by Claude Code, so one sitting next to
+  // an unrelated CLAUDE.md is a real and easy-to-miss divergence.
+  const agentsFile = path.join(projectDir, 'AGENTS.md');
+  if (fs.existsSync(agentsFile) && !loaded.some((item) => item.file === agentsFile)) {
+    problems.push({ kind: 'agents-md-not-imported', file: agentsFile, scope: 'project' });
+  }
+
+  for (const item of loaded) {
+    item.lines = item.text.split('\n').length;
+    item.bytes = Buffer.byteLength(item.text, 'utf8');
+    item.tokens = estimateTokens(item.text);
+    if (item.globs && !item.globs.checks.every((c) => c.valid)) {
+      for (const check of item.globs.checks.filter((c) => !c.valid)) {
+        problems.push({ kind: 'invalid-glob', file: item.file, scope: item.scope, pattern: check.pattern, reason: check.reason });
+      }
+    }
+    if (item.globs?.overBudget) {
+      problems.push({ kind: 'glob-budget', file: item.file, scope: item.scope, expansions: item.globs.expansions });
+    }
+    if (item.kind === 'claude-md' && item.lines > CLAUDE_MD_TARGET_LINES) {
+      problems.push({ kind: 'long-claude-md', file: item.file, scope: item.scope, lines: item.lines });
+    }
+  }
+
+  const unconditional = loaded.filter((item) => !item.conditional);
+  return {
+    projectDir,
+    files: loaded,
+    excluded,
+    problems,
+    totals: {
+      files: loaded.length,
+      // Conditional rules only load when Claude reads a matching file, so they
+      // are counted apart from what every session pays for.
+      alwaysLines: unconditional.reduce((sum, item) => sum + item.lines, 0),
+      alwaysBytes: unconditional.reduce((sum, item) => sum + item.bytes, 0),
+      alwaysTokens: unconditional.reduce((sum, item) => sum + item.tokens, 0),
+      conditionalFiles: loaded.length - unconditional.length,
+      conditionalTokens: loaded.filter((i) => i.conditional).reduce((sum, item) => sum + item.tokens, 0),
+    },
+  };
+}

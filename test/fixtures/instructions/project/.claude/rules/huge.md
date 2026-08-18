@@ -1,0 +1,8 @@
+---
+paths:
+  - "{a,b,c,d,e,f,g,h,i,j}/{k,l,m,n,o,p,q,r,s,t}/{u,v,w,x,y,z,aa,bb,cc,dd}/**/*.{ts,tsx}"
+---
+
+# Too many expansions
+
+Used unexpanded, so its literal braces match no file.

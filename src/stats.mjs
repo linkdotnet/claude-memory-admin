@@ -26,16 +26,107 @@ export const INDEX_BYTE_LIMIT = 25 * 1024;
 export const LONG_HOOK_CHARS = 200;
 
 /**
- * The text that actually counts against the limits. Claude Code strips YAML
- * frontmatter and block-level HTML comments before loading the index, so
- * measuring the raw file would overstate the size.
+ * The text that actually counts against the limits, plus a map from each line of
+ * it back to the line it came from in the raw file.
+ *
+ * Claude Code strips YAML frontmatter and block-level HTML comments before
+ * loading the index, so measuring the raw file would overstate the size. That
+ * stripping is also why a position in the loaded text is not a line number in
+ * the file: to draw the cutoff where the user can see it, the removed spans have
+ * to be tracked rather than just discarded.
  */
+export function loadedIndex(indexText) {
+  if (!indexText) return { text: '', rawLineFor: [] };
+
+  const removed = [];
+  const frontmatter = indexText.match(/^---\n[\s\S]*?\n---\n?/);
+  const base = frontmatter ? frontmatter[0].length : 0;
+  if (frontmatter) removed.push([0, base]);
+
+  // Matched on the post-frontmatter text, exactly as the stripping itself is, so
+  // the `m` anchors land on the same line starts.
+  for (const match of indexText.slice(base).matchAll(/^[ \t]*<!--[\s\S]*?-->[ \t]*\n?/gm)) {
+    removed.push([base + match.index, base + match.index + match[0].length]);
+  }
+
+  removed.sort((a, b) => a[0] - b[0]);
+  const kept = [];
+  let cursor = 0;
+  for (const [start, end] of removed) {
+    if (start > cursor) kept.push([cursor, start]);
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < indexText.length) kept.push([cursor, indexText.length]);
+
+  const rawLineStarts = [0];
+  for (let i = 0; i < indexText.length; i++) {
+    if (indexText[i] === '\n') rawLineStarts.push(i + 1);
+  }
+  const rawLineAt = (offset) => {
+    let low = 0;
+    let high = rawLineStarts.length - 1;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if (rawLineStarts[mid] <= offset) low = mid;
+      else high = mid - 1;
+    }
+    return low;
+  };
+
+  // One raw offset per surviving character, which is what makes the line map a
+  // lookup rather than a second parse that could disagree with the first.
+  const offsets = [];
+  for (const [start, end] of kept) {
+    for (let i = start; i < end; i++) offsets.push(i);
+  }
+
+  const rawLineFor = [];
+  if (offsets.length) rawLineFor.push(rawLineAt(offsets[0]));
+  for (let i = 0; i < offsets.length - 1; i++) {
+    if (indexText[offsets[i]] === '\n') rawLineFor.push(rawLineAt(offsets[i + 1]));
+  }
+
+  return { text: kept.map(([start, end]) => indexText.slice(start, end)).join(''), rawLineFor };
+}
+
+/** The loaded text alone, for callers that do not need the line map. */
 export function loadedIndexText(indexText) {
-  if (!indexText) return '';
-  let text = indexText;
-  const frontmatter = text.match(/^---\n[\s\S]*?\n---\n?/);
-  if (frontmatter) text = text.slice(frontmatter[0].length);
-  return text.replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*\n?/gm, '');
+  return loadedIndex(indexText).text;
+}
+
+/**
+ * Where the index stops being loaded, and which entries fall past it.
+ *
+ * The percentage on the meter says an index is too big; this says which memories
+ * Claude can no longer see, which is the thing you can act on. Both are derived
+ * from the same loaded text, so they cannot disagree.
+ */
+function findCutoff(loaded, entries) {
+  const lines = loaded.text.split('\n');
+  let bytes = 0;
+  let byteCut = Infinity;
+  for (let i = 0; i < lines.length; i++) {
+    // Every line but the last carries its newline.
+    bytes += Buffer.byteLength(lines[i], 'utf8') + (i < lines.length - 1 ? 1 : 0);
+    if (bytes > INDEX_BYTE_LIMIT) { byteCut = i; break; }
+  }
+  const lineCut = loaded.rawLineFor.length > INDEX_LINE_LIMIT ? INDEX_LINE_LIMIT : Infinity;
+
+  const loadedLine = Math.min(lineCut, byteCut);
+  if (!Number.isFinite(loadedLine)) return null;
+
+  const rawLine = loaded.rawLineFor[loadedLine];
+  if (rawLine === undefined) return null;
+
+  return {
+    loadedLine,
+    rawLine,
+    by: lineCut <= byteCut ? 'lines' : 'bytes',
+    droppedLines: loaded.rawLineFor.length - loadedLine,
+    droppedEntries: entries
+      .filter((entry) => entry.index >= rawLine)
+      .map((entry) => ({ index: entry.index, file: entry.file, title: entry.title })),
+  };
 }
 
 export function indexStats(indexText, entries) {
@@ -44,12 +135,13 @@ export function indexStats(indexText, entries) {
       bytes: 0, lines: 0, tokens: 0, entryCount: 0, longHooks: [], longestHook: 0,
       lineLimit: INDEX_LINE_LIMIT, byteLimit: INDEX_BYTE_LIMIT,
       linePercent: 0, bytePercent: 0, worstPercent: 0, level: 'ok', overLimit: false, nearLimit: false,
+      cutoff: null,
     };
   }
 
-  const loaded = loadedIndexText(indexText);
-  const lines = loaded.split('\n').filter((line, i, all) => i < all.length - 1 || line.length > 0).length;
-  const bytes = Buffer.byteLength(loaded, 'utf8');
+  const loaded = loadedIndex(indexText);
+  const lines = loaded.rawLineFor.length;
+  const bytes = Buffer.byteLength(loaded.text, 'utf8');
 
   const longHooks = entries
     .filter((entry) => entry.hook.length > LONG_HOOK_CHARS)
@@ -64,7 +156,7 @@ export function indexStats(indexText, entries) {
     bytes,
     lines,
     rawBytes: Buffer.byteLength(indexText, 'utf8'),
-    tokens: estimateTokens(loaded),
+    tokens: estimateTokens(loaded.text),
     entryCount: entries.length,
     longHooks,
     longestHook: entries.reduce((max, e) => Math.max(max, e.hook.length), 0),
@@ -77,6 +169,7 @@ export function indexStats(indexText, entries) {
     overLimit: lines > INDEX_LINE_LIMIT || bytes > INDEX_BYTE_LIMIT,
     nearLimit: worstPercent >= 75,
     level: worstPercent > 100 ? 'over' : worstPercent >= 75 ? 'near' : 'ok',
+    cutoff: findCutoff(loaded, entries),
   };
 }
 

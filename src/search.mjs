@@ -3,8 +3,8 @@
 // The whole store is a few hundred kilobytes, so this scans it directly on each
 // query rather than maintaining an index that could go stale.
 
-import { buildProject } from './model.mjs';
-import { listProjects } from './projects.mjs';
+import { buildStore } from './model.mjs';
+import { listStores } from './stores.mjs';
 
 const FIELD_WEIGHT = { name: 6, description: 3, hook: 2, body: 1 };
 
@@ -102,26 +102,28 @@ export function searchProject(project, terms) {
   return { results: results.sort((a, b) => b.score - a.score), indexHits };
 }
 
-/** Search every project under `root`. */
+/** Search every store: auto memory and subagent memory alike. */
 export function searchAll(root, query, { limit = 200 } = {}) {
   const terms = fold(query).split(/\s+/).filter(Boolean);
   if (!terms.length) return { terms, total: 0, projects: [] };
 
-  const projects = [];
+  const stores = [];
   let total = 0;
-  for (const listed of listProjects(root)) {
+  for (const listed of listStores(root)) {
     if (!listed.hasMemoryDir) continue;
-    const project = buildProject(root, listed.slug);
-    const { results, indexHits } = searchProject(project, terms);
+    const store = buildStore(listed);
+    const { results, indexHits } = searchProject(store, terms);
     if (!results.length && !indexHits.length) continue;
     total += results.length;
-    projects.push({
-      slug: listed.slug,
-      label: project.label,
+    stores.push({
+      id: listed.id,
+      kind: listed.kind,
+      label: store.label,
+      sublabel: listed.sublabel || null,
       results: results.slice(0, limit),
       indexHits: indexHits.slice(0, 20),
     });
   }
 
-  return { terms, total, projects: projects.sort((a, b) => b.results.length - a.results.length) };
+  return { terms, total, stores: stores.sort((a, b) => b.results.length - a.results.length) };
 }

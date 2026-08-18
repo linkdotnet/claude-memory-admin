@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
-import { indexStats, loadedIndexText, findDuplicates, INDEX_LINE_LIMIT, INDEX_BYTE_LIMIT } from '../src/stats.mjs';
+import { indexStats, loadedIndex, loadedIndexText, findDuplicates, INDEX_LINE_LIMIT, INDEX_BYTE_LIMIT } from '../src/stats.mjs';
+import { allRoots, memoryDirs } from './helpers.mjs';
 
 test('frontmatter and HTML comments do not count toward the load limit', () => {
   // Claude Code strips both before loading the index, so measuring the raw file
@@ -60,4 +63,66 @@ test('overlap detection is not fooled by a shared naming prefix', () => {
     (top.a.file === 'c.md' && top.b.file === 'd.md') || (top.a.file === 'd.md' && top.b.file === 'c.md'),
     `expected the tailwind pair to rank first, got ${top.a.name} <> ${top.b.name}`,
   );
+});
+
+test('the line map survives frontmatter and comments being stripped', () => {
+  // Stripping shifts every loaded line away from the line it came from, so the
+  // cutoff has to be reported in raw line numbers or it points at the wrong place.
+  const head = ['---', 'title: notes', '---', '<!-- a maintainer note -->'];
+  const bullets = Array.from({ length: 210 }, (_, i) => `- [E${i}](e${i}.md) — x`);
+  const raw = [...head, ...bullets].join('\n');
+
+  const loaded = loadedIndex(raw);
+  assert.equal(loaded.rawLineFor.length, 210);
+  // The first loaded line is the first bullet, which is raw line 4.
+  assert.equal(loaded.rawLineFor[0], 4);
+  assert.equal(loaded.rawLineFor[200], 204);
+});
+
+test('an over-long index names the entries that stop being loaded', () => {
+  const head = ['---', 'title: notes', '---', '<!-- a maintainer note -->'];
+  const bullets = Array.from({ length: 210 }, (_, i) => `- [E${i}](e${i}.md) — x`);
+  const raw = [...head, ...bullets].join('\n');
+  const entries = bullets.map((_, i) => ({ index: 4 + i, file: `e${i}.md`, title: `E${i}`, hook: 'x' }));
+
+  const { cutoff } = indexStats(raw, entries);
+  assert.equal(cutoff.by, 'lines');
+  assert.equal(cutoff.rawLine, 204);
+  assert.equal(cutoff.droppedLines, 10);
+  assert.deepEqual(cutoff.droppedEntries.map((e) => e.file), Array.from({ length: 10 }, (_, i) => `e${200 + i}.md`));
+});
+
+test('a byte-bound index is cut on bytes, not lines', () => {
+  const bullets = Array.from({ length: 10 }, (_, i) => `- [E${i}](e${i}.md) — ${'x'.repeat(3000)}`);
+  const entries = bullets.map((_, i) => ({ index: i, file: `e${i}.md`, title: `E${i}`, hook: 'x' }));
+  const { cutoff } = indexStats(bullets.join('\n'), entries);
+
+  assert.equal(cutoff.by, 'bytes');
+  assert.ok(cutoff.rawLine > 0 && cutoff.rawLine < 10, `cut inside the file, got ${cutoff.rawLine}`);
+  assert.ok(cutoff.droppedEntries.length > 0);
+});
+
+test('an index inside the limit has no cutoff', () => {
+  assert.equal(indexStats('- [A](a.md) — one\n', [{ index: 0, file: 'a.md', title: 'A', hook: 'one' }]).cutoff, null);
+});
+
+test('the line map agrees with the loaded text on every real index', () => {
+  // The count used to come from splitting the loaded text and dropping a trailing
+  // blank. The map has to reproduce that exactly, or the meter and the cutoff
+  // would be measuring two different things.
+  const countByOldRule = (text) =>
+    text.split('\n').filter((line, i, all) => i < all.length - 1 || line.length > 0).length;
+
+  for (const dir of allRoots.flatMap(memoryDirs)) {
+    const raw = fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8');
+    const loaded = loadedIndex(raw);
+    assert.equal(loaded.text, loadedIndexText(raw), dir);
+    assert.equal(loaded.rawLineFor.length, countByOldRule(loaded.text), dir);
+    // Every loaded line must map to a real line of the file, in order.
+    const rawLines = raw.split('\n');
+    for (let i = 0; i < loaded.rawLineFor.length; i++) {
+      assert.ok(loaded.rawLineFor[i] < rawLines.length, `${dir} line ${i}`);
+      if (i > 0) assert.ok(loaded.rawLineFor[i] > loaded.rawLineFor[i - 1], `${dir} line ${i} went backwards`);
+    }
+  }
 });

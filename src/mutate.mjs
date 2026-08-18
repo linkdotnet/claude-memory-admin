@@ -1,4 +1,9 @@
-// The only code in the app that writes. Everything else is read-only.
+// The only code that writes inside a memory store. Everything else is read-only.
+//
+// Every entry point takes the store's directory rather than a root and a slug:
+// auto memory and subagent memory live in unrelated places on disk but hold the
+// same MEMORY.md-plus-topic-files shape, so nothing below needs to know which
+// kind it is working on.
 //
 // Deletes are soft: the file moves into memory/.trash/ and a restore record
 // captures the MEMORY.md lines that were removed, with their original indices,
@@ -8,7 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseIndex, removeIndexEntries, removeLine, insertLines, unwrapWikilink } from './parse.mjs';
-import { listMemoryFiles, memoryDir } from './projects.mjs';
+import { listMemoryFiles } from './projects.mjs';
 import { TRASH_DIR, loadMemory } from './model.mjs';
 
 function sha256(text) {
@@ -94,8 +99,7 @@ const writeIndexAtomic = (dir, text) => writeFileAtomic(dir, 'MEMORY.md', text);
  * What a delete would do, without doing it. This is what the confirm dialog
  * renders, so it has to be exhaustive about the collateral.
  */
-export function deletePreview(root, slug, file) {
-  const dir = memoryDir(root, slug);
+export function deletePreview(dir, file) {
   const full = safeMemoryPath(dir, file);
   const exists = fs.existsSync(full);
   const indexText = readIndex(dir);
@@ -165,8 +169,7 @@ export function deletePreview(root, slug, file) {
  * clearing a whole project both come through here, so there is a single restore
  * path rather than three.
  */
-export function deleteMemories(root, slug, files, { includeIndex = false, label = null } = {}) {
-  const dir = memoryDir(root, slug);
+export function deleteMemories(dir, files, { includeIndex = false, label = null } = {}) {
   const wanted = [...new Set([].concat(files))];
   if (!wanted.length) throw new Error('Nothing selected to delete');
 
@@ -221,7 +224,6 @@ export function deleteMemories(root, slug, files, { includeIndex = false, label 
     id: `${stamp}_${includeIndex ? 'project' : targets[0].file}`,
     label: label || (targets.length === 1 ? targets[0].name : `${targets.length} memories`),
     deletedAt: new Date().toISOString(),
-    slug,
     files: moved.map(({ file, trashedFile, name, description }) => ({ file, trashedFile, name, description })),
     indexTrashedFile: moved.indexTrashed || null,
     removedLines: removed,
@@ -233,18 +235,16 @@ export function deleteMemories(root, slug, files, { includeIndex = false, label 
 }
 
 /** Single-memory delete, optionally cascading to the memories that link to it. */
-export function deleteMemory(root, slug, file, alsoDelete = []) {
+export function deleteMemory(dir, file, alsoDelete = []) {
   const extra = [].concat(alsoDelete).filter((f) => f && f !== file);
-  return deleteMemories(root, slug, [file, ...extra]);
+  return deleteMemories(dir, [file, ...extra]);
 }
 
 /** What clearing a whole project would remove. */
-export function projectDeletePreview(root, slug) {
-  const dir = memoryDir(root, slug);
+export function projectDeletePreview(dir) {
   const files = listMemoryFiles(dir);
   const indexText = readIndex(dir);
   return {
-    slug,
     files: files.map((file) => {
       const memory = loadMemory(dir, file);
       return { file, name: memory?.name || file, description: memory?.description || '' };
@@ -255,8 +255,7 @@ export function projectDeletePreview(root, slug) {
 }
 
 /** Trash every memory in a project, MEMORY.md included, as one operation. */
-export function deleteProject(root, slug) {
-  const dir = memoryDir(root, slug);
+export function deleteProject(dir) {
   const files = listMemoryFiles(dir);
   const indexText = readIndex(dir);
   if (!files.length && indexText === null) throw new Error('This project has no memory to delete');
@@ -274,7 +273,6 @@ export function deleteProject(root, slug) {
       id: `${stamp}_project`,
       label: 'MEMORY.md',
       deletedAt: new Date().toISOString(),
-      slug,
       files: [],
       indexTrashedFile: trashedIndex,
       removedLines: [],
@@ -285,7 +283,7 @@ export function deleteProject(root, slug) {
     return { deleted: true, record };
   }
 
-  return deleteMemories(root, slug, files, {
+  return deleteMemories(dir, files, {
     includeIndex: indexText !== null,
     label: `whole project (${files.length} memories)`,
   });
@@ -295,8 +293,7 @@ export function deleteProject(root, slug) {
  * Turn a broken `[[target]]` into plain text in one memory. The original file
  * is copied into .trash first so the edit can be undone like any delete.
  */
-export function removeWikilink(root, slug, file, target) {
-  const dir = memoryDir(root, slug);
+export function removeWikilink(dir, file, target) {
   const full = safeMemoryPath(dir, file);
   if (!fs.existsSync(full)) throw new Error(`No such memory: ${file}`);
   if (typeof target !== 'string' || !target.trim()) throw new Error('No link target given');
@@ -324,7 +321,6 @@ export function removeWikilink(root, slug, file, target) {
     id: `${stamp}_${file}.unlink`,
     label: `[[${target}]] in ${file}`,
     deletedAt: new Date().toISOString(),
-    slug,
     sourceFile: file,
     target,
     occurrences: count,
@@ -337,8 +333,7 @@ export function removeWikilink(root, slug, file, target) {
 }
 
 /** Undo any trashed operation: a delete, a cascade, a project clear, or an unlink. */
-export function restoreMemory(root, slug, id) {
-  const dir = memoryDir(root, slug);
+export function restoreMemory(dir, id) {
   const trashPath = path.join(dir, TRASH_DIR);
   const recordPath = path.join(trashPath, `${id}.restore.json`);
   if (!fs.existsSync(recordPath)) throw new Error('No such trash record');
@@ -403,8 +398,7 @@ export function restoreMemory(root, slug, id) {
 }
 
 /** Drop a single MEMORY.md line, used to clear a pointer whose file is gone. */
-export function deleteIndexLine(root, slug, lineIndex, expectedText) {
-  const dir = memoryDir(root, slug);
+export function deleteIndexLine(dir, lineIndex, expectedText) {
   const current = readIndex(dir);
   if (current === null) throw new Error('This project has no MEMORY.md');
 

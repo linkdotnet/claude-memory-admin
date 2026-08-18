@@ -207,6 +207,14 @@ code { font-family: var(--mono); font-size: .9em; }
 .index-line.kind-index:hover .content { text-decoration: underline; }
 .index-line.dangling { background: var(--danger-soft); }
 
+/* Everything past the cutoff is still in the file but never reaches Claude, so
+   it is dimmed rather than hidden: it is real content that is not doing its job. */
+.index-line.beyond-cut { opacity: .45; }
+.index-line.beyond-cut .content { text-decoration-line: line-through; text-decoration-color: var(--border); }
+.cut-line { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.cut-line::before, .cut-line::after { content: ""; flex: 1; border-top: 1px dashed var(--danger); }
+.cut-label { font-family: var(--mono); font-size: 11px; color: var(--danger); white-space: nowrap; }
+
 /* ---------- health + trash ---------- */
 
 .issue { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; background: var(--panel); padding: 10px 14px; margin-bottom: 8px; display: flex; gap: 12px; align-items: flex-start; }
@@ -400,3 +408,32 @@ code { font-family: var(--mono); font-size: .9em; }
 @media (prefers-color-scheme: dark) {
   .sidebar-foot img { filter: invert(1); }
 }
+
+/* --- what stopped loading --- */
+.cut-summary { border: 1px solid var(--danger); border-radius: 10px; background: var(--danger-soft); padding: 14px 16px; margin-bottom: 18px; }
+.cut-summary-head { font-weight: 650; font-size: 14px; color: var(--danger); margin-bottom: 4px; }
+.cut-summary .muted { margin: 0 0 10px; }
+.cut-summary .issue { background: var(--panel); border-left-color: var(--danger); }
+
+/* --- provenance markers --- */
+.off-marker { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--warn); background: var(--warn-soft); border-radius: 3px; padding: 1px 4px; }
+.root-source { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); background: var(--accent-soft); border-radius: 3px; padding: 1px 4px; margin-left: 6px; }
+#project-sub span { display: block; }
+.sub-note { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.sub-warn { color: var(--warn); font-size: 11.5px; margin-top: 2px; }
+.link-btn { padding: 1px 8px; font-size: 11.5px; vertical-align: baseline; }
+.path-input { width: 100%; font-family: var(--mono); font-size: 12.5px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); color: var(--text); margin: 4px 0 12px; }
+.path-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sidebar-group { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 14px 14px 5px; }
+
+/* --- context tab --- */
+.ctx-row { display: flex; gap: 14px; align-items: baseline; justify-content: space-between; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+.ctx-row:last-child { border-bottom: none; }
+.ctx-main { min-width: 0; }
+.ctx-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 3px; }
+.ctx-file { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.ctx-size { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.badge.scope-managed { background: var(--danger-soft); color: var(--danger); }
+.badge.scope-user { background: var(--accent-soft); color: var(--accent); }
+.badge.scope-project { background: var(--warn-soft); color: var(--warn); }
+.badge.scope-local { background: var(--panel-2); color: var(--muted); }

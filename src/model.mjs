@@ -1,5 +1,10 @@
-// Builds the full view model for one project: its index, its memory files, the
-// wikilink graph between them, and the consistency problems worth surfacing.
+// Builds the full view model for one memory store: its index, its memory files,
+// the wikilink graph between them, and the consistency problems worth surfacing.
+//
+// A store is addressed by its directory, not by a root and a slug. Auto memory
+// and subagent memory sit in unrelated places on disk but hold the same shape, so
+// everything below is written against the shape and knows nothing about which
+// kind it was handed.
 //
 // The whole store is a few hundred kilobytes, so this runs per request. No
 // cache, no watcher, no invalidation bugs.
@@ -8,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseIndex, parseFrontmatter, extractWikilinks } from './parse.mjs';
 import { listMemoryFiles, memoryDir, resolveProjectPath, shortLabel } from './projects.mjs';
+import { autoMemoryState } from './settings.mjs';
 import { ageInDays, estimateTokens, findDuplicates, indexStats } from './stats.mjs';
 
 export const TRASH_DIR = '.trash';
@@ -46,6 +52,13 @@ export function loadMemory(dir, file) {
     stat = fs.statSync(path.join(dir, file));
   } catch { /* raced with a delete */ }
 
+  // Claude Code stamps `modified` only on files that already begin with
+  // frontmatter, and never adds frontmatter to a file that has none, so for those
+  // files the mtime fallback is permanent. mtime is also reset by any copy, rsync
+  // or restore - including this tool's own trash round-trip - so which of the two
+  // a date came from is the difference between evidence and a guess.
+  const stamped = typeof metadata.modified === 'string' && metadata.modified ? metadata.modified : null;
+
   return {
     file,
     stem,
@@ -60,7 +73,8 @@ export function loadMemory(dir, file) {
     body,
     raw,
     bytes: stat ? stat.size : raw.length,
-    modified: metadata.modified || (stat ? new Date(stat.mtimeMs).toISOString() : null),
+    modified: stamped || (stat ? new Date(stat.mtimeMs).toISOString() : null),
+    modifiedFrom: stamped ? 'frontmatter' : (stat ? 'mtime' : null),
     tokens: estimateTokens(raw),
     outbound: extractWikilinks(body).map((w) => w.target),
   };
@@ -80,10 +94,8 @@ function buildResolver(memories) {
   return (target) => byName.get(target) || byStem.get(target) || null;
 }
 
-export function buildProject(root, slug) {
-  const dir = memoryDir(root, slug);
-  const projectDir = path.join(root, slug);
-  const resolved = resolveProjectPath(projectDir, slug);
+export function buildStore(store) {
+  const { dir } = store;
   const hasMemoryDir = fs.existsSync(dir);
 
   const indexRaw = readIfExists(path.join(dir, 'MEMORY.md'));
@@ -165,10 +177,7 @@ export function buildProject(root, slug) {
   health.issueCount = health.issues.length;
 
   return {
-    slug,
-    path: resolved.path,
-    label: shortLabel(resolved.path),
-    resolvedBy: resolved.resolvedBy,
+    ...store,
     hasMemoryDir,
     hasIndex: index !== null,
     index: index
@@ -195,6 +204,30 @@ export function buildProject(root, slug) {
     duplicates: findDuplicates(memories),
     trash: listTrash(dir),
   };
+}
+
+/**
+ * The auto-memory store for one project. Everything the project model carries
+ * beyond the store itself - its real path, the directories that feed it, whether
+ * Claude is still writing to it - is resolved here and handed to buildStore.
+ */
+export function buildProject(root, slug) {
+  const resolved = resolveProjectPath(path.join(root, slug), slug);
+  return buildStore({
+    slug,
+    kind: 'auto',
+    dir: memoryDir(root, slug),
+    path: resolved.path,
+    label: shortLabel(resolved.path),
+    resolvedBy: resolved.resolvedBy,
+    // The decode that could not be confirmed, offered as a starting point when
+    // the user is asked to name the path themselves.
+    guess: resolved.guess || null,
+    workingDirs: resolved.workingDirs || [],
+    // Off means this store will never grow again, which on disk looks exactly
+    // like a project Claude has not learned anything about yet.
+    autoMemory: autoMemoryState({ projectDir: resolved.exists ? resolved.path : null }),
+  });
 }
 
 /** Restore records left behind by soft deletes, newest first. */
