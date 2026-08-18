@@ -14,6 +14,11 @@ claude-memory-admin
 It opens `http://localhost:4173` and reads `~/.claude/projects/*/memory/`.
 Nothing leaves your machine; the server binds `127.0.0.1` only.
 
+This project is built heavily with AI tooling: most of the code, the tests
+and this README were written by Claude Code, with a human directing the design
+and reviewing what landed. Fitting for a tool about what Claude writes for
+itself, and worth saying out loud.
+
 <sub>Brought to you by [BitSpire](https://bitspire.ch/).</sub>
 
 ---
