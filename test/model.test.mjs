@@ -9,7 +9,7 @@ import { listProjects } from '../src/projects.mjs';
 import { allRoots, FIXTURE_ROOT, FIXTURE_SLUG, hasRealStore, REAL_ROOT } from './helpers.mjs';
 
 const KINDS = new Set(
-  [...fs.readFileSync(new URL('../public/app.mjs', import.meta.url), 'utf8')
+  [...fs.readFileSync(new URL('../public/views/issue.mjs', import.meta.url), 'utf8')
     .matchAll(/item\.kind === '([a-z-]+)'/g)].map((match) => match[1]),
 );
 

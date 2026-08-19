@@ -10,12 +10,13 @@ import { FIXTURE_ROOT } from './helpers.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-const frontendSources = [
-  ...fs.readdirSync(path.join(root, 'public'))
-    .filter((name) => name.endsWith('.mjs'))
-    .map((name) => `public/${name}`),
-  'styles/app.css',
-];
+const walk = (dir) => fs.readdirSync(path.join(root, dir), { withFileTypes: true })
+  .flatMap((entry) => (entry.isDirectory()
+    ? walk(`${dir}/${entry.name}`)
+    : entry.name.endsWith('.mjs') ? [`${dir}/${entry.name}`] : []));
+
+const frontendModules = walk('public');
+const frontendSources = [...frontendModules, 'styles/app.css'];
 
 // The comment-free rule is a house style that review keeps missing, so it is
 // checked rather than remembered.
@@ -41,7 +42,7 @@ test('class names are never interpolated', () => {
 test('every ui token used by the frontend is exported', async () => {
   const ui = await import(new URL('../public/ui.mjs', import.meta.url));
   const exported = new Set(Object.keys(ui));
-  for (const file of ['public/app.mjs', 'public/graph.mjs', 'public/dialog.mjs']) {
+  for (const file of frontendModules) {
     const used = new Set([...read(file).matchAll(/(?<![/\w])ui\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]));
     const missing = [...used].filter((name) => !exported.has(name));
     assert.deepEqual(missing, [], `${file} uses undefined ui exports: ${missing}`);
@@ -82,7 +83,7 @@ test('index.html role hooks all resolve to a ui export', async () => {
 });
 
 test('every model field the tab strip reads is one the model actually produces', () => {
-  const app = read('public/app.mjs');
+  const app = frontendModules.map(read).join('\n');
   const overflow = buildProject(FIXTURE_ROOT, '-Users-demo-repos-overflow');
 
   const reads = (prefix, object) => {
@@ -99,7 +100,7 @@ test('every model field the tab strip reads is one the model actually produces',
 test('an index past the load limit is one the tab strip can warn about', () => {
   const { stats } = buildProject(FIXTURE_ROOT, '-Users-demo-repos-overflow');
   assert.equal(stats.index.level, 'over', 'the fixture exists to be over the limit');
-  assert.match(read('public/app.mjs'), /stats\.index\.level/);
+  assert.match(read('public/views/header.mjs'), /stats\.index\.level/);
 });
 
 test('the theme boot script and the runtime share one storage key', () => {
@@ -109,4 +110,14 @@ test('the theme boot script and the runtime share one storage key', () => {
   assert.match(html, /prefers-color-scheme: dark/);
   assert.match(app, /localStorage\.setItem\('theme', value\)/);
   assert.match(app, /localStorage\.getItem\('theme'\)/);
+});
+
+const SELF_CONTAINED = new Set(['public/ui.mjs', 'public/graph.mjs']);
+
+test('no view or dialog module grows back into a second app.mjs', () => {
+  const oversized = frontendModules
+    .filter((file) => !SELF_CONTAINED.has(file))
+    .map((file) => ({ file, lines: read(file).split('\n').length }))
+    .filter(({ lines }) => lines > 300);
+  assert.deepEqual(oversized, [], `split these up: ${JSON.stringify(oversized)}`);
 });

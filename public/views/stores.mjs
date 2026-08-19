@@ -1,0 +1,65 @@
+import * as ui from '/ui.mjs';
+import { el, node } from '/dom.mjs';
+import { state } from '/state.mjs';
+import { openStore } from '/store.mjs';
+
+function storeSubtitle(store) {
+  if (store.kind === 'global') return store.dir;
+  if (store.kind === 'auto') return store.path;
+  const scope = store.kind === 'agent-user' ? 'user'
+    : store.kind === 'agent-project' ? 'project' : 'local';
+  return `${scope} · ${store.sublabel}`;
+}
+
+function issueTitle(store) {
+  const parts = [];
+  if (store.issueCount) parts.push(`${store.issueCount} in Health`);
+  if (store.context) parts.push(`${store.context} in Context`);
+  if (store.settings) parts.push(`${store.settings} in Settings`);
+  if (store.kind === 'auto' && store.resolvedBy === 'unresolved') {
+    parts.push('Real path could not be resolved - showing the raw folder name');
+  }
+  return parts.length ? `${store.dir}\n${parts.join(', ')}` : store.dir;
+}
+
+function storeButton(store) {
+  const global = store.kind === 'global';
+  const health = !global && !store.hasMemoryDir ? 'none' : store.severity || 'ok';
+  const off = store.autoMemory && store.autoMemory.known && !store.autoMemory.enabled;
+  return node('button', {
+    class: ui.storeItem({ active: store.id === state.storeId, empty: !global && !store.hasMemoryDir }),
+    onclick: () => openStore(store.id),
+    title: issueTitle(store),
+  }, [
+    node('span', { class: ui.storeRow }, [
+      node('span', { class: ui.dot(health) }),
+      node('span', { class: ui.storeName, text: store.label }),
+      off ? node('span', { class: ui.offMarker, text: 'off', title: 'Auto memory is disabled for this project' }) : null,
+      global ? null : node('span', { class: ui.storeCount, text: store.hasMemoryDir ? String(store.memoryCount) : '-' }),
+    ]),
+    node('span', { class: ui.storePath, text: storeSubtitle(store) }),
+  ]);
+}
+
+export function renderStores() {
+  const list = el('project-list');
+  list.textContent = '';
+
+  const visible = state.stores.filter((s) => s.kind === 'global' || state.showAll || s.hasMemoryDir);
+  if (!visible.length) {
+    list.append(node('p', { class: ui.note, text: 'No memory stores found.' }));
+    return;
+  }
+
+  const groups = [
+    ['Global', visible.filter((s) => s.kind === 'global')],
+    ['Projects', visible.filter((s) => s.kind === 'auto')],
+    ['Subagents', visible.filter((s) => s.kind !== 'auto' && s.kind !== 'global')],
+  ];
+
+  const filled = groups.filter(([, stores]) => stores.length);
+  for (const [title, stores] of filled) {
+    if (filled.length > 1) list.append(node('div', { class: ui.sidebarGroup, text: title }));
+    for (const store of stores) list.append(storeButton(store));
+  }
+}
