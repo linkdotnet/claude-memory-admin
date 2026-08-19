@@ -19,8 +19,6 @@ and this README were written by Claude Code, with a human directing the design
 and reviewing what landed. Fitting for a tool about what Claude writes for
 itself, and worth saying out loud.
 
-<sub>Brought to you by [BitSpire](https://bitspire.ch/).</sub>
-
 ---
 
 ### Prune: see what MEMORY.md actually costs you
