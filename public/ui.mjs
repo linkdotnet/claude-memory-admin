@@ -225,11 +225,13 @@ export const dupeSideName = 'text-sm font-medium text-fg';
 export const dupeActions = 'mt-2 flex flex-wrap justify-end gap-2';
 export const dupeSideDesc = 'text-xs text-fg-muted';
 
-export const contextRow = 'flex items-baseline justify-between gap-3.5 border-b border-line px-1 py-1.5 last:border-b-0';
 export const contextMain = 'min-w-0';
 export const contextTags = 'mb-1 flex flex-wrap gap-1.5';
 export const contextFile = 'font-mono text-2xs break-words text-fg';
 export const contextSize = 'font-mono text-2xs whitespace-nowrap text-fg-subtle';
+export const contextRowButton = 'flex w-full cursor-pointer items-baseline justify-between gap-3.5 border-0 border-b border-line bg-transparent px-1 py-1.5 text-left transition-colors last:border-b-0 hover:bg-surface-sunken';
+export const contextCaret = 'mr-1.5 inline-block font-mono text-2xs text-fg-subtle';
+export const contextBody = 'mb-1.5 max-h-[28rem] overflow-y-auto rounded-md border border-line bg-surface-sunken px-3.5 py-2.5';
 
 export const graphWrap = 'graph relative overflow-hidden rounded-lg border border-line bg-surface';
 export const graphToolbar = 'absolute top-3 right-3.5 flex items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5';

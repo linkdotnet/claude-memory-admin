@@ -175,9 +175,26 @@ It also finds the failures that leave a file silently doing nothing:
 - Brace expansion past the 1,000-pattern budget, where the pattern is used
   unexpanded and its literal braces match no file either.
 - An `AGENTS.md` that no `CLAUDE.md` imports. Claude Code reads `CLAUDE.md`.
+- A markdown file sitting in `~/.claude` that nothing in the chain reaches. It
+  looks load-bearing and loads nothing, which is what happens when the import
+  that pulled it in is deleted or its content is inlined.
 
 Backticks are respected, so a `` `@README` `` in your prose is not reported as an
 import, and neither is an email address.
+
+Every file listed opens in place, so you can read what actually loads without
+leaving the tab. Nothing here is editable: the app never rewrites a `CLAUDE.md`.
+
+### The user scope on its own
+
+The half of that chain no project owns — managed policy, `~/.claude/CLAUDE.md`,
+`~/.claude/rules/` and their imports — is also a **Global** entry at the top of
+the sidebar. It is what every session on the machine pays for before a project is
+even chosen, and it resolves without a project directory, so it is there even when
+no project's real path could be recovered from a transcript.
+
+It holds instructions rather than memory, so it is read-only and has no MEMORY.md,
+graph or trash. Search does not reach into it.
 
 This is re-derived from the documented resolution rules rather than reported by
 Claude Code, and the tab says so. Run `/context` in a session for the ground
@@ -300,7 +317,7 @@ ready to serve and never builds anything. After editing the source, run
 | `src/projects.mjs` | Project discovery, slug → real path resolution |
 | `src/settings.mjs` | Layered reads of Claude Code's settings files, and the report behind the Settings tab |
 | `src/pathcache.mjs` | The opt-in record of confirmed project paths |
-| `src/stores.mjs` | Store discovery: auto memory and the three agent scopes |
+| `src/stores.mjs` | Store discovery: the user scope, auto memory and the three agent scopes |
 | `src/instructions.mjs` | CLAUDE.md chain, `@` imports and rules resolution |
 | `src/parse.mjs` | `MEMORY.md` and frontmatter parsers, wikilinks |
 | `src/model.mjs` | Joins index, files, graph and health into one model |

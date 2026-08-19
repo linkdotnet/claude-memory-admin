@@ -97,3 +97,35 @@ test('search spans stores and reports which one each hit came from', () => {
     assert.ok(store.kind);
   }
 });
+
+test('the user scope is listed first, as a store that holds no memory', () => {
+  const home = path.join(here, 'fixtures', 'instructions', 'user-home');
+  const stores = listStores(FIXTURE_ROOT, { home });
+
+  assert.equal(stores[0].kind, 'global', 'the global entry leads the list');
+  const global = stores[0];
+  assert.equal(global.dir, path.join(home, '.claude'));
+  assert.ok(global.id.startsWith('global:'));
+  // False on purpose: it is what keeps ~/.claude out of search and out of
+  // everything else that reads memory files off a store directory.
+  assert.equal(global.hasMemoryDir, false);
+  assert.equal(global.hasIndex, false);
+  assert.equal(global.memoryCount, 0);
+  assert.equal(stores.filter((s) => s.kind === 'global').length, 1);
+});
+
+test('the global store id is stable across calls', () => {
+  const home = path.join(here, 'fixtures', 'instructions', 'user-home');
+  const first = listStores(FIXTURE_ROOT, { home })[0].id;
+  const second = listStores(FIXTURE_ROOT, { home })[0].id;
+  assert.equal(first, second);
+});
+
+test('search never reaches into the user scope', () => {
+  const home = path.join(here, 'fixtures', 'instructions', 'user-home');
+  // "conventions" appears in the fixture home's CLAUDE.md, which is an
+  // instruction file and must never be searched as if it were a memory.
+  const found = searchAll(FIXTURE_ROOT, 'conventions');
+  assert.ok(!found.stores.some((s) => s.kind === 'global'));
+  assert.ok(listStores(FIXTURE_ROOT, { home }).some((s) => s.kind === 'global'));
+});

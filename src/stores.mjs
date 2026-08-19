@@ -24,6 +24,7 @@ export const AGENT_PROJECT_DIR = path.join('.claude', 'agent-memory');
 export const AGENT_LOCAL_DIR = path.join('.claude', 'agent-memory-local');
 
 export const STORE_KINDS = {
+  global: { label: 'Global', scope: 'user' },
   auto: { label: 'Project', scope: null },
   'agent-user': { label: 'Subagent', scope: 'user' },
   'agent-project': { label: 'Subagent', scope: 'project' },
@@ -124,17 +125,46 @@ function autoStore(project, root) {
 }
 
 /**
- * Every store, auto memory first. Agent stores are found under the project paths
- * auto memory already resolved, so a repository this tool has never seen a
- * session for contributes nothing.
+ * The user scope, in the shape of a store so it can be selected like one.
+ *
+ * It holds no memory: ~/.claude is where the instructions live, not a MEMORY.md
+ * index and topic files. It is listed anyway because it is the one thing every
+ * session on the machine loads, and until now it had nowhere to be seen. Leaving
+ * `hasMemoryDir` false is what keeps it out of full-text search, which skips
+ * stores without one, and out of everything else that reads memory files.
  */
-export function listStores(root = projectsRoot()) {
+function globalStore(home) {
+  const dir = path.join(home, '.claude');
+  return {
+    id: storeId('global', dir),
+    kind: 'global',
+    dir,
+    path: dir,
+    label: 'Global',
+    sublabel: 'user scope',
+    memoryCount: 0,
+    hasMemoryDir: false,
+    hasIndex: false,
+    pathExists: fs.existsSync(dir),
+  };
+}
+
+/**
+ * Every store, the user scope first and auto memory after it. Agent stores are
+ * found under the project paths auto memory already resolved, so a repository this
+ * tool has never seen a session for contributes nothing.
+ *
+ * `home` is a parameter because the global entry is about the real home directory
+ * rather than the memory root, which --root can point somewhere else entirely.
+ */
+export function listStores(root = projectsRoot(), { home = os.homedir() } = {}) {
   const projects = listProjects(root);
   const projectPaths = projects
     .filter((project) => project.pathExists)
     .flatMap((project) => [project.path, ...(project.workingDirs || [])]);
 
   return [
+    globalStore(home),
     ...projects.map((project) => autoStore(project, root)),
     ...listAgentStores({ projectPaths }),
   ];

@@ -65,6 +65,23 @@ export function maskCode(text) {
 // so the character before it has to be a boundary.
 const IMPORT = /(^|[\s(<'"])@((?:~\/|\.{0,2}\/)?[A-Za-z0-9._~\-][A-Za-z0-9._~\-/]*)/g;
 
+/**
+ * Drop the punctuation that ended the sentence rather than the path.
+ *
+ * A dot is legal in a filename and so is inside the match, which means an import
+ * written at the end of a sentence - "conventions live in @extra.md." - swallows
+ * the full stop and resolves to a file nobody has. The same goes for an ellipsis.
+ * No path meaningfully ends in a dot, so a trailing run of them is prose.
+ *
+ * Nothing else can leak in: the only other punctuation the match accepts is
+ * `-`, `_`, `~` and `/`, none of which ends an English sentence, and a trailing
+ * slash is left alone because it says "directory", which is a real thing to have
+ * written and a real thing for the import to fail on.
+ */
+function trimTrailingProse(spec) {
+  return spec.replace(/\.+$/, '');
+}
+
 /** Every `@path` import in a file's text, with the offset it was found at. */
 export function findImports(text) {
   const masked = maskCode(text);
@@ -74,7 +91,10 @@ export function findImports(text) {
     // "@team@example.com" opens with something that looks exactly like an
     // import until the second @ arrives.
     if (masked[end] === '@') continue;
-    found.push({ spec: match[2], index: match.index + match[1].length });
+    const spec = trimTrailingProse(match[2]);
+    // "@." and "@..." are punctuation with an @ in front, not a path.
+    if (!spec) continue;
+    found.push({ spec, index: match.index + match[1].length });
   }
   return found;
 }
@@ -313,19 +333,14 @@ function globToRegExp(pattern) {
 }
 
 /**
- * Everything that would load for a session started in `projectDir`, in the order
- * Claude Code loads it: broadest scope first, so the most specific instruction is
- * the last thing read.
+ * Managed policy and user scope: what loads whichever project a session starts in.
+ *
+ * `home` is a parameter rather than a call to os.homedir() so this is a total
+ * function of where it is told to look, which is what makes it testable without a
+ * real home directory.
  */
-export function resolveInstructions(projectDir) {
-  const home = os.homedir();
-  const layers = settingsLayers({ projectDir });
-  const excludeFound = lookup(layers, 'claudeMdExcludes');
-  const excludes = Array.isArray(excludeFound?.value) ? excludeFound.value.map(String) : [];
-  const excluded = [];
-
-  const candidates = [];
-  candidates.push(entry(managedClaudeMd(), 'managed', 'claude-md'));
+function userCandidates(home, layers) {
+  const candidates = [entry(managedClaudeMd(), 'managed', 'claude-md')];
 
   const managedInline = lookup(layers, 'claudeMd');
   const inline = typeof managedInline?.value === 'string' && managedInline.value.trim()
@@ -338,8 +353,12 @@ export function resolveInstructions(projectDir) {
   for (const file of listRuleFiles(path.join(home, '.claude', 'rules'))) {
     candidates.push(ruleEntry(file, 'user'));
   }
+  return candidates;
+}
 
-  // Root-to-cwd, CLAUDE.md then CLAUDE.local.md at each level.
+/** Root-to-cwd, CLAUDE.md then CLAUDE.local.md at each level, then the project's own .claude. */
+function projectCandidates(projectDir) {
+  const candidates = [];
   for (const dir of ancestors(projectDir)) {
     candidates.push(entry(path.join(dir, 'CLAUDE.md'), 'project', 'claude-md'));
     candidates.push(entry(path.join(dir, 'CLAUDE.local.md'), 'local', 'claude-md'));
@@ -348,8 +367,24 @@ export function resolveInstructions(projectDir) {
   for (const file of listRuleFiles(path.join(projectDir, '.claude', 'rules'))) {
     candidates.push(ruleEntry(file, 'project'));
   }
+  return candidates;
+}
 
+function readExcludes(layers) {
+  const found = lookup(layers, 'claudeMdExcludes');
+  return Array.isArray(found?.value) ? found.value.map(String) : [];
+}
+
+/**
+ * Turn a candidate list into the resolved set: excludes applied, imports expanded,
+ * every file measured and every problem named.
+ *
+ * Both entry points go through here, so the whole-session view and the user-scope
+ * one cannot drift apart in what they count or what they consider broken.
+ */
+function finalize(candidates, { projectDir, excludes }) {
   const matchers = excludes.map(globToRegExp);
+  const excluded = [];
   const loaded = [];
   const problems = [];
 
@@ -377,13 +412,6 @@ export function resolveInstructions(projectDir) {
         external: imported.external,
       });
     }
-  }
-
-  // AGENTS.md is read by other tools, not by Claude Code, so one sitting next to
-  // an unrelated CLAUDE.md is a real and easy-to-miss divergence.
-  const agentsFile = path.join(projectDir, 'AGENTS.md');
-  if (fs.existsSync(agentsFile) && !loaded.some((item) => item.file === agentsFile)) {
-    problems.push({ kind: 'agents-md-not-imported', file: agentsFile, scope: 'project' });
   }
 
   for (const item of loaded) {
@@ -420,4 +448,78 @@ export function resolveInstructions(projectDir) {
       conditionalTokens: loaded.filter((i) => i.conditional).reduce((sum, item) => sum + item.tokens, 0),
     },
   };
+}
+
+/**
+ * Markdown files sitting in ~/.claude that nothing in the chain reaches.
+ *
+ * A file next to CLAUDE.md looks load-bearing, and stops being so the moment the
+ * import that pulled it in is deleted or its content is inlined - which leaves
+ * nothing behind to say so. This is the same failure the unimported AGENTS.md
+ * check exists for, one directory up.
+ *
+ * Only the top level is read. The directories below it - plans, skills, projects,
+ * backups - are full of markdown that was never meant to be an instruction file,
+ * and walking into them would bury the one finding that matters.
+ */
+export function unreferencedUserFiles(home, loadedFiles) {
+  const dir = path.join(home, '.claude');
+  // Imports arrive already absolutised by resolveImport while candidates are
+  // joined from `home`, so both sides are resolved before they are compared.
+  const loaded = new Set(loadedFiles.map((item) => path.resolve(item.file)));
+
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((item) => item.isFile() && item.name.endsWith('.md'))
+    .map((item) => path.resolve(dir, item.name))
+    .filter((file) => !loaded.has(file))
+    .sort()
+    .map((file) => ({ kind: 'unreferenced-user-file', file, scope: 'user' }));
+}
+
+/**
+ * Everything that would load for a session started in `projectDir`, in the order
+ * Claude Code loads it: broadest scope first, so the most specific instruction is
+ * the last thing read.
+ */
+export function resolveInstructions(projectDir) {
+  const layers = settingsLayers({ projectDir });
+  const candidates = [
+    ...userCandidates(os.homedir(), layers),
+    ...projectCandidates(projectDir),
+  ];
+  const resolved = finalize(candidates, { projectDir, excludes: readExcludes(layers) });
+
+  // AGENTS.md is read by other tools, not by Claude Code, so one sitting next to
+  // an unrelated CLAUDE.md is a real and easy-to-miss divergence.
+  const agentsFile = path.join(projectDir, 'AGENTS.md');
+  if (fs.existsSync(agentsFile) && !resolved.files.some((item) => item.file === agentsFile)) {
+    resolved.problems.push({ kind: 'agents-md-not-imported', file: agentsFile, scope: 'project' });
+  }
+
+  return resolved;
+}
+
+/**
+ * The user scope on its own: what every session on this machine pays for before a
+ * project is even chosen.
+ *
+ * This is the half of the chain no project owns, so it has nowhere else to be
+ * shown. Resolving it needs no project directory, which is what makes it visible
+ * on a machine where no project path could be recovered from a transcript.
+ *
+ * With no project there is no boundary for an import to resolve outside of, so
+ * nothing is marked external here - that check belongs to the whole-session view.
+ */
+export function resolveGlobalInstructions({ home = os.homedir(), settingsFile = null } = {}) {
+  const layers = settingsLayers(settingsFile ? { settingsFile } : {});
+  const resolved = finalize(userCandidates(home, layers), { projectDir: null, excludes: readExcludes(layers) });
+  resolved.problems.push(...unreferencedUserFiles(home, resolved.files));
+  return resolved;
 }

@@ -80,6 +80,7 @@ function renderBody(container, memory, project) {
 }
 
 function storeSubtitle(store) {
+  if (store.kind === 'global') return store.dir;
   if (store.kind === 'auto') return store.path;
   const scope = store.kind === 'agent-user' ? 'user'
     : store.kind === 'agent-project' ? 'project' : 'local';
@@ -87,10 +88,11 @@ function storeSubtitle(store) {
 }
 
 function storeButton(store) {
-  const health = store.memoryCount === 0 ? 'none' : 'ok';
+  const global = store.kind === 'global';
+  const health = global ? 'ok' : store.memoryCount === 0 ? 'none' : 'ok';
   const off = store.autoMemory && store.autoMemory.known && !store.autoMemory.enabled;
   return node('button', {
-    class: ui.storeItem({ active: store.id === state.storeId, empty: !store.hasMemoryDir }),
+    class: ui.storeItem({ active: store.id === state.storeId, empty: !global && !store.hasMemoryDir }),
     onclick: () => openStore(store.id),
     title: store.kind === 'auto' && store.resolvedBy === 'unresolved'
       ? 'Real path could not be resolved - showing the raw folder name'
@@ -100,7 +102,7 @@ function storeButton(store) {
       node('span', { class: ui.dot(health) }),
       node('span', { class: ui.storeName, text: store.label }),
       off ? node('span', { class: ui.offMarker, text: 'off', title: 'Auto memory is disabled for this project' }) : null,
-      node('span', { class: ui.storeCount, text: store.hasMemoryDir ? String(store.memoryCount) : '-' }),
+      global ? null : node('span', { class: ui.storeCount, text: store.hasMemoryDir ? String(store.memoryCount) : '-' }),
     ]),
     node('span', { class: ui.storePath, text: storeSubtitle(store) }),
   ]);
@@ -110,22 +112,21 @@ function renderStores() {
   const list = el('project-list');
   list.textContent = '';
 
-  const visible = state.stores.filter((s) => state.showAll || s.hasMemoryDir);
+  const visible = state.stores.filter((s) => s.kind === 'global' || state.showAll || s.hasMemoryDir);
   if (!visible.length) {
     list.append(node('p', { class: ui.note, text: 'No memory stores found.' }));
     return;
   }
 
   const groups = [
+    ['Global', visible.filter((s) => s.kind === 'global')],
     ['Projects', visible.filter((s) => s.kind === 'auto')],
-    ['Subagents', visible.filter((s) => s.kind !== 'auto')],
+    ['Subagents', visible.filter((s) => s.kind !== 'auto' && s.kind !== 'global')],
   ];
 
-  for (const [title, stores] of groups) {
-    if (!stores.length) continue;
-    if (groups.every(([, group]) => group.length) ) {
-      list.append(node('div', { class: ui.sidebarGroup, text: title }));
-    }
+  const filled = groups.filter(([, stores]) => stores.length);
+  for (const [title, stores] of filled) {
+    if (filled.length > 1) list.append(node('div', { class: ui.sidebarGroup, text: title }));
     for (const store of stores) list.append(storeButton(store));
   }
 }
@@ -144,12 +145,14 @@ const TABS = [
 function renderTabs() {
   const container = el('tabs');
   container.textContent = '';
+  const global = state.store.kind === 'global';
   const hasProjectDir = state.store.kind === 'auto'
     ? state.store.resolvedBy !== 'unresolved'
     : Boolean(state.store.projectPath);
 
   for (const tab of TABS) {
-    if (tab.id === 'context' && !hasProjectDir) continue;
+    if (global && tab.id !== 'context') continue;
+    if (!global && tab.id === 'context' && !hasProjectDir) continue;
     let badge = null;
     if (tab.id === 'memories') badge = String(state.store.memories.length);
     if (tab.id === 'health' && state.store.health.issueCount) badge = String(state.store.health.issueCount);
@@ -390,6 +393,7 @@ const CONTEXT_PROBLEMS = {
   'glob-budget': (p) => ['Rule has too many brace expansions', `${p.file} expands to ${p.expansions} patterns, past the 1,000 budget, so it is used unexpanded and its literal braces match no file`],
   'long-claude-md': (p) => [`${p.lines} lines, over the 200-line guidance`, `${p.file} - long files cost context every session and reduce adherence`],
   'agents-md-not-imported': (p) => ['AGENTS.md is not loaded', `${p.file} exists, but Claude Code reads CLAUDE.md. Import it with @AGENTS.md, or symlink it.`],
+  'unreferenced-user-file': (p) => ['Nothing in the chain reaches this file', `${p.file} sits next to CLAUDE.md and loads nothing. Import it with @${p.file.split('/').pop()}, or delete it.`],
 };
 
 async function renderContext(container) {
@@ -404,7 +408,8 @@ async function renderContext(container) {
   if (state.tab !== 'context') return;
   container.textContent = '';
 
-  if (!data.projectDir) {
+  const global = state.store.kind === 'global';
+  if (!data.projectDir && !global) {
     return container.append(node('p', { class: ui.note, text: 'This store is not tied to a project directory, so there are no instruction files to resolve.' }));
   }
 
@@ -447,13 +452,33 @@ async function renderContext(container) {
     if (file.kind === 'managed-settings') tags.push(node('span', { class: ui.badge(), text: 'claudeMd setting' }));
     if (file.conditional) tags.push(node('span', { class: ui.badge('warn'), text: 'only on a path match' }));
 
-    card.append(node('div', { class: ui.contextRow }, [
+    const body = node('div', { class: ui.contextBody, hidden: true });
+    const bodyProse = node('div', { class: ui.prose });
+    body.append(bodyProse);
+    const caret = node('span', { class: ui.contextCaret, text: '\u25b8' });
+    let rendered = false;
+
+    card.append(node('button', {
+      class: ui.contextRowButton,
+      'aria-expanded': 'false',
+      onclick: (event) => {
+        const open = body.hidden;
+        body.hidden = !open;
+        caret.textContent = open ? '\u25be' : '\u25b8';
+        event.currentTarget.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open && !rendered) {
+          rendered = true;
+          renderMarkdown(bodyProse, file.text);
+        }
+      },
+    }, [
       node('div', { class: ui.contextMain }, [
         node('div', { class: ui.contextTags }, tags),
-        node('div', { class: ui.contextFile, text: file.file }),
+        node('div', { class: ui.contextFile }, [caret, document.createTextNode(file.file)]),
       ]),
       node('div', { class: ui.contextSize, text: `${file.lines} L · ~${file.tokens.toLocaleString()} tok` }),
     ]));
+    card.append(body);
   }
   container.append(card);
 
@@ -1723,9 +1748,16 @@ async function reloadStores() {
 function renderStoreHeader() {
   const store = state.store;
   el('project-title').textContent = store.label;
+  el('delete-project').hidden = store.kind === 'global';
 
   const sub = el('project-sub');
   sub.textContent = '';
+
+  if (store.kind === 'global') {
+    sub.append(node('span', { text: store.dir }));
+    sub.append(node('span', { class: ui.subNote, text: 'instructions every session loads, before any project is chosen' }));
+    return;
+  }
 
   if (store.kind !== 'auto') {
     const scope = store.kind === 'agent-user' ? 'user'
@@ -1767,7 +1799,8 @@ async function openStore(id, { keepTab = false } = {}) {
   if (id !== state.storeId) state.pruneSelection.clear();
   state.storeId = id;
   if (!keepTab) {
-    state.tab = 'memories';
+    const opening = state.stores.find((store) => store.id === id);
+    state.tab = opening && opening.kind === 'global' ? 'context' : 'memories';
     state.selected = null;
   }
   renderStores();

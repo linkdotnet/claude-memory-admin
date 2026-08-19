@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 
 import { projectsRoot, resolveRoot } from './src/projects.mjs';
 import { buildStore } from './src/model.mjs';
-import { resolveInstructions } from './src/instructions.mjs';
+import { resolveGlobalInstructions, resolveInstructions } from './src/instructions.mjs';
 import { settingsReport } from './src/settings.mjs';
 import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
@@ -127,8 +127,37 @@ function requireStore(id) {
 }
 
 function storeProjectDir(store) {
+  // The global store is the user scope itself, which no project owns.
+  if (store.kind === 'global') return null;
   if (store.kind !== 'auto') return store.projectPath || null;
   return store.pathExists ? store.path : null;
+}
+
+/**
+ * The global store holds instructions, not memory, and its directory is ~/.claude
+ * itself. Every write endpoint below resolves a target inside `store.dir`, so
+ * without this guard a delete aimed at it would land on the user's CLAUDE.md and
+ * settings rather than on a memory file. It is read-only, and refused here once
+ * rather than in each of the fifteen handlers.
+ */
+export function refuseWritesToGlobal(store, method) {
+  if (store.kind === 'global' && method !== 'GET') {
+    throw new Error('The global store is read-only: it holds instruction files, not memory.');
+  }
+}
+
+/** A store with nothing to build a memory model from, in the shape the frontend expects. */
+function emptyModel(store) {
+  return {
+    ...store,
+    index: null,
+    memories: [],
+    graph: { nodes: [], edges: [], dangling: [] },
+    health: { orphans: [], referencedOnly: [], danglingIndex: [], danglingWikilinks: [], nameMismatches: [], missingFrontmatter: [], longHooks: [], issues: [], issueCount: 0 },
+    stats: null,
+    duplicates: [],
+    trash: [],
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -156,17 +185,21 @@ async function handleApi(req, res, url) {
   }
 
   const store = requireStore(decodeURIComponent(segments[2]));
+  refuseWritesToGlobal(store, req.method);
   const dir = store.dir;
   const action = segments.slice(3).join('/');
 
   if (!action && req.method === 'GET') {
-    return sendJson(res, 200, buildStore(store));
+    // buildStore reads every .md in the directory as a memory file, which for
+    // ~/.claude would present CLAUDE.md and its neighbours as memories.
+    return sendJson(res, 200, store.kind === 'global' ? emptyModel(store) : buildStore(store));
   }
 
   // What a session starting in this store's project would load as instructions.
   // Read-only, and scoped to a directory the app already discovered rather than
   // one named in the request.
   if (action === 'instructions' && req.method === 'GET') {
+    if (store.kind === 'global') return sendJson(res, 200, resolveGlobalInstructions());
     const projectDir = storeProjectDir(store);
     if (!projectDir) return sendJson(res, 200, { projectDir: null, files: [], problems: [], excluded: [], totals: null });
     return sendJson(res, 200, resolveInstructions(projectDir));
