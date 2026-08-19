@@ -1,5 +1,7 @@
 import { renderGraph } from '/graph.mjs';
 import { renderMarkdown } from '/markdown.mjs';
+import { confirmDialog, isDialogOpen, openDialog } from '/dialog.mjs';
+import { el, node } from '/dom.mjs';
 import * as ui from '/ui.mjs';
 
 const state = {
@@ -25,8 +27,6 @@ const RANK = { ok: 0, warn: 1, bad: 2 };
 const worst = (...severities) => severities.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), 'ok');
 const worstSeverity = (items) => (!items.length ? 'ok' : items.some((item) => item.severity === 'bad') ? 'bad' : 'warn');
 
-const el = (id) => document.getElementById(id);
-
 async function api(path, options) {
   const response = await fetch(path, {
     headers: { 'content-type': 'application/json' },
@@ -38,32 +38,17 @@ async function api(path, options) {
 }
 
 function toast(message, { error = false, action } = {}) {
-  const node = document.createElement('div');
-  node.className = ui.toast(error);
-  node.append(document.createTextNode(message));
+  const element = node('div', { class: ui.toast(error) });
+  element.append(document.createTextNode(message));
   if (action) {
-    const button = document.createElement('button');
-    button.className = ui.toastAction;
-    button.textContent = action.label;
-    button.onclick = () => { node.remove(); action.run(); };
-    node.append(button);
+    element.append(node('button', {
+      class: ui.toastAction,
+      text: action.label,
+      onclick: () => { element.remove(); action.run(); },
+    }));
   }
-  el('toast-root').append(node);
-  setTimeout(() => node.remove(), action ? 12000 : 4500);
-}
-
-function node(tag, props = {}, children = []) {
-  const element = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') element.className = value;
-    else if (key === 'text') element.textContent = value;
-    else if (key.startsWith('on')) element.addEventListener(key.slice(2).toLowerCase(), value);
-    else if (value !== null && value !== undefined) element.setAttribute(key, value);
-  }
-  for (const child of [].concat(children)) {
-    if (child) element.append(child);
-  }
-  return element;
+  el('toast-root').append(element);
+  setTimeout(() => element.remove(), action ? 12000 : 4500);
 }
 
 function memoryLookup(project) {
@@ -667,7 +652,19 @@ function goToTab(id) {
 }
 
 async function removeIndexLine(lineIndex, expectedText, done) {
-  if (!confirm(`Remove line ${lineIndex + 1} from MEMORY.md?\n\n${expectedText}`)) return;
+  const go = await confirmDialog({
+    title: `Remove line ${lineIndex + 1} from MEMORY.md?`,
+    confirmLabel: 'Remove',
+    tone: 'danger',
+    body: [
+      node('div', { class: ui.willBlock }, [
+        node('div', { class: ui.willTitle, text: 'Will be removed' }),
+        node('div', { class: ui.willItem('remove'), text: expectedText }),
+      ]),
+      node('p', { class: ui.noteTight, text: 'Only this line goes. The memory file it points at is left on disk.' }),
+    ],
+  });
+  if (!go) return;
   try {
     await api(`/api/stores/${encodeURIComponent(state.storeId)}/index-line/delete`, {
       method: 'POST',
@@ -709,7 +706,21 @@ function renderIssue(item, memories) {
         action: {
           label: 'Remove link',
           run: async () => {
-            if (!confirm(`Remove [[${link.target}]] from ${link.from}?\n\nThe link markup goes, the words stay:\n  "see [[${link.target}]]"  ->  "see ${link.target}"\n\nA copy of the file is kept in the trash, so this can be undone.`)) return;
+            const go = await confirmDialog({
+              title: `Remove [[${link.target}]] from ${link.from}?`,
+              confirmLabel: 'Remove link',
+              tone: 'danger',
+              body: [
+                node('p', { class: ui.noteTight, text: 'The link markup goes, the words stay.' }),
+                node('div', { class: ui.willBlock }, [
+                  node('div', { class: ui.willTitle, text: 'Will change' }),
+                  node('div', { class: ui.willItem('remove'), text: `see [[${link.target}]]` }),
+                  node('div', { class: ui.willItem('keep'), text: `see ${link.target}` }),
+                ]),
+                node('p', { class: ui.noteTight, text: 'A copy of the file is kept in the trash, so this can be undone.' }),
+              ],
+            });
+            if (!go) return;
             try {
               const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/wikilink/remove`, {
                 method: 'POST',
@@ -1246,7 +1257,7 @@ function openHookEditor(row, lineIndex) {
   field.select();
 }
 
-function openMoveDialog(entry) {
+async function openMoveDialog(entry) {
   const current = indexEntryAt(entry.index);
   if (!current) return toast('MEMORY.md has changed - reload and try again', { error: true });
 
@@ -1256,40 +1267,31 @@ function openMoveDialog(entry) {
   picker.append(node('option', { value: '', text: 'Top of MEMORY.md' }));
   for (const section of sections) picker.append(node('option', { value: section, text: `Start of "${section}"` }));
 
-  const body = node('div', { class: ui.modalBody }, [
-    node('p', { class: ui.noteTight, text: `"${current.title}" sits at line ${current.index + 1}, past the cutoff at line ${cutoff ? cutoff.rawLine + 1 : '-'}, so Claude never loads it. Moving it up puts it back inside the loaded part of the index - which pushes whatever is now last past the cutoff instead.` }),
-    node('div', { class: ui.willBlock }, [
-      node('div', { class: ui.willTitle, text: 'Will move' }),
-      node('div', { class: ui.willItem('keep'), text: current.text }),
-    ]),
-    node('label', { class: ui.willTitle, text: 'Move to' }),
-    picker,
-  ]);
+  const go = await openDialog({
+    title: 'Move this entry above the cutoff',
+    body: [
+      node('p', { class: ui.noteTight, text: `"${current.title}" sits at line ${current.index + 1}, past the cutoff at line ${cutoff ? cutoff.rawLine + 1 : '-'}, so Claude never loads it. Moving it up puts it back inside the loaded part of the index - which pushes whatever is now last past the cutoff instead.` }),
+      node('div', { class: ui.willBlock }, [
+        node('div', { class: ui.willTitle, text: 'Will move' }),
+        node('div', { class: ui.willItem('keep'), text: current.text }),
+      ]),
+      node('label', { class: ui.willTitle, text: 'Move to' }),
+      picker,
+    ],
+    actions: [
+      { label: 'Cancel' },
+      { label: 'Move', tone: 'primary', value: true },
+    ],
+  });
+  if (!go) return;
 
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [node('h3', { class: ui.modalTitle, text: 'Move this entry above the cutoff' })]),
-    body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      node('button', {
-        class: ui.button({ tone: 'primary' }),
-        text: 'Move',
-        onclick: async () => {
-          closeModal();
-          await runIndexEdit(
-            'index/move',
-            picker.value
-              ? { lineIndex: current.index, expectedText: current.text, section: picker.value }
-              : { lineIndex: current.index, expectedText: current.text, top: true },
-            () => 'Entry moved',
-          );
-        },
-      }),
-    ]),
-  ]);
-
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
+  await runIndexEdit(
+    'index/move',
+    picker.value
+      ? { lineIndex: current.index, expectedText: current.text, section: picker.value }
+      : { lineIndex: current.index, expectedText: current.text, top: true },
+    () => 'Entry moved',
+  );
 }
 
 async function openAddEntryDialog(file) {
@@ -1303,8 +1305,8 @@ async function openAddEntryDialog(file) {
     return toast(err.message, { error: true });
   }
 
-  const title = node('input', { type: 'text', class: ui.pathInput, spellcheck: 'false' });
-  title.value = preview.name;
+  const titleInput = node('input', { type: 'text', class: ui.pathInput, spellcheck: 'false' });
+  titleInput.value = preview.name;
   const hook = node('textarea', { class: ui.textArea, spellcheck: 'false' });
   hook.value = preview.description;
 
@@ -1315,54 +1317,44 @@ async function openAddEntryDialog(file) {
 
   const line = node('div', { class: ui.willItem('keep') });
   const update = () => {
-    const label = title.value.trim().replace(/[[\]]/g, '') || preview.name;
+    const label = titleInput.value.trim().replace(/[[\]]/g, '') || preview.name;
     const text = hook.value.trim();
     line.textContent = text ? `- [${label}](${file}) — ${text}` : `- [${label}](${file})`;
   };
-  title.addEventListener('input', update);
+  titleInput.addEventListener('input', update);
   hook.addEventListener('input', update);
   update();
 
-  const body = node('div', { class: ui.modalBody }, [
-    node('p', { class: ui.noteTight, text: preview.hasIndex
-      ? 'MEMORY.md is loaded at the start of every session, so a memory with no bullet here is one Claude never sees. This adds one line and nothing else.'
-      : 'This project has no MEMORY.md yet. Adding this entry creates one.' }),
-    node('label', { class: ui.willTitle, text: 'Title' }),
-    title,
-    node('label', { class: ui.willTitle, text: 'Hook' }),
-    hook,
-    node('label', { class: ui.willTitle, text: 'Section' }),
-    picker,
-    node('div', { class: ui.willBlock }, [
-      node('div', { class: ui.willTitle, text: 'Will be added' }),
-      line,
-    ]),
-  ]);
+  const go = await openDialog({
+    title: `Add ${file} to MEMORY.md`,
+    body: [
+      node('p', { class: ui.noteTight, text: preview.hasIndex
+        ? 'MEMORY.md is loaded at the start of every session, so a memory with no bullet here is one Claude never sees. This adds one line and nothing else.'
+        : 'This project has no MEMORY.md yet. Adding this entry creates one.' }),
+      node('label', { class: ui.willTitle, text: 'Title' }),
+      titleInput,
+      node('label', { class: ui.willTitle, text: 'Hook' }),
+      hook,
+      node('label', { class: ui.willTitle, text: 'Section' }),
+      picker,
+      node('div', { class: ui.willBlock }, [
+        node('div', { class: ui.willTitle, text: 'Will be added' }),
+        line,
+      ]),
+    ],
+    actions: [
+      { label: 'Cancel' },
+      { label: 'Add entry', tone: 'primary', value: true },
+    ],
+    focus: titleInput,
+  });
+  if (!go) return;
 
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [node('h3', { class: ui.modalTitle, text: `Add ${file} to MEMORY.md` })]),
-    body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      node('button', {
-        class: ui.button({ tone: 'primary' }),
-        text: 'Add entry',
-        onclick: async () => {
-          closeModal();
-          await runIndexEdit(
-            'index/add',
-            { file, section: picker.value || null, title: title.value, hook: hook.value },
-            () => 'Added to MEMORY.md',
-          );
-        },
-      }),
-    ]),
-  ]);
-
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
-  title.focus();
-  title.select();
+  await runIndexEdit(
+    'index/add',
+    { file, section: picker.value || null, title: titleInput.value, hook: hook.value },
+    () => 'Added to MEMORY.md',
+  );
 }
 
 async function openMergeDialog(into, from) {
@@ -1379,8 +1371,8 @@ async function openMergeDialog(into, from) {
   const heading = node('input', { type: 'text', class: ui.pathInput, spellcheck: 'false' });
   heading.value = preview.heading;
 
-  const body = node('div', { class: ui.modalBody });
-  body.append(node('p', { class: ui.noteTight, text: `Everything in "${preview.fromName}" moves into "${preview.intoName}" under a new heading, and "${preview.fromName}" goes to the trash. This rewrites prose, which nothing else in this app does - the whole operation is one undo.` }));
+  const body = [];
+  body.push(node('p', { class: ui.noteTight, text: `Everything in "${preview.fromName}" moves into "${preview.intoName}" under a new heading, and "${preview.fromName}" goes to the trash. This rewrites prose, which nothing else in this app does - the whole operation is one undo.` }));
 
   const changes = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Will change' })]);
   changes.append(node('div', { class: ui.willItem('keep'), text: `${preview.into}  +  ${preview.bodyLines} line(s) from ${preview.from}` }));
@@ -1390,7 +1382,7 @@ async function openMergeDialog(into, from) {
   for (const link of preview.selfLinks) {
     changes.append(node('div', { class: ui.willItem('keep'), text: `${preview.into}  [[${link}]]  →  plain text, to avoid a self-link` }));
   }
-  body.append(changes);
+  body.push(changes);
 
   const removals = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Will be removed' })]);
   removals.append(node('div', { class: ui.willItem('remove'), text: `memory/${preview.from}  →  memory/.trash/` }));
@@ -1400,7 +1392,7 @@ async function openMergeDialog(into, from) {
   if (!preview.indexLines.length) {
     removals.append(node('div', { class: ui.willItem(), text: 'MEMORY.md has no index bullet for the source - nothing to remove there.' }));
   }
-  body.append(removals);
+  body.push(removals);
 
   if (preview.inlineRefs.length) {
     const kept = node('div', { class: ui.willBlock }, [
@@ -1409,45 +1401,35 @@ async function openMergeDialog(into, from) {
     for (const ref of preview.inlineRefs) {
       kept.append(node('div', { class: ui.willItem('keep'), text: `MEMORY.md line ${ref.index + 1}:  ${ref.text}` }));
     }
-    body.append(kept);
+    body.push(kept);
   }
 
-  body.append(node('label', { class: ui.willTitle, text: 'Heading for the merged section' }), heading);
+  body.push(node('label', { class: ui.willTitle, text: 'Heading for the merged section' }), heading);
 
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [
-      node('h3', { class: ui.modalTitle, text: `Merge "${preview.fromName}" into "${preview.intoName}"?` }),
-    ]),
+  const go = await openDialog({
+    title: `Merge "${preview.fromName}" into "${preview.intoName}"?`,
     body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      node('button', {
-        class: ui.button({ tone: 'primary' }),
-        text: 'Merge',
-        onclick: async () => {
-          closeModal();
-          try {
-            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/merge`, {
-              method: 'POST',
-              body: JSON.stringify({ into, from, heading: heading.value }),
-            });
-            if (state.selected === from) state.selected = into;
-            await openStore(state.storeId, { keepTab: true });
-            toast(`Merged into ${preview.intoName}`, {
-              action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
-            });
-          } catch (err) {
-            toast(err.message, { error: true });
-          }
-        },
-      }),
-    ]),
-  ]);
+    actions: [
+      { label: 'Cancel' },
+      { label: 'Merge', tone: 'primary', value: true },
+    ],
+    focus: heading,
+  });
+  if (!go) return;
 
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
-  heading.focus();
-  heading.select();
+  try {
+    const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ into, from, heading: heading.value }),
+    });
+    if (state.selected === from) state.selected = into;
+    await openStore(state.storeId, { keepTab: true });
+    toast(`Merged into ${preview.intoName}`, {
+      action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
+    });
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
 }
 
 async function restoreFromTrash(id) {
@@ -1498,10 +1480,6 @@ function renderTrash(container) {
   }
 }
 
-function closeModal() {
-  el('modal-root').textContent = '';
-}
-
 async function openDeleteDialog(file) {
   let preview;
   try {
@@ -1513,7 +1491,7 @@ async function openDeleteDialog(file) {
     return toast(err.message, { error: true });
   }
 
-  const body = node('div', { class: ui.modalBody });
+  const body = [];
 
   const removals = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Will be removed' })]);
   removals.append(node('div', { class: ui.willItem('remove'), text: `memory/${preview.file}  →  memory/.trash/` }));
@@ -1523,14 +1501,14 @@ async function openDeleteDialog(file) {
   if (!preview.indexLines.length && preview.hasIndex) {
     removals.append(node('div', { class: ui.willItem(), text: 'MEMORY.md has no index bullet for this file - nothing to unlink there.' }));
   }
-  body.append(removals);
+  body.push(removals);
 
   if (preview.inlineRefs.length) {
     const kept = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Left untouched - mentioned inside prose, so you may want to fix these by hand' })]);
     for (const ref of preview.inlineRefs) {
       kept.append(node('div', { class: ui.willItem('keep'), text: `MEMORY.md line ${ref.index + 1}:  ${ref.text}` }));
     }
-    body.append(kept);
+    body.push(kept);
   }
 
   const cascade = new Set();
@@ -1566,7 +1544,7 @@ async function openDeleteDialog(file) {
     }
     block.append(list);
     block.append(node('p', { class: ui.noteTight, text: 'Tick any you also want deleted - they go to the trash together and restore as one step.' }));
-    body.append(block);
+    body.push(block);
 
     selectAll.onclick = (event) => {
       event.preventDefault();
@@ -1578,52 +1556,39 @@ async function openDeleteDialog(file) {
     };
   }
 
-  body.append(node('p', { class: ui.noteTight, text: 'The file moves to memory/.trash/ with a restore record, so this can be undone.' }));
+  body.push(node('p', { class: ui.noteTight, text: 'The file moves to memory/.trash/ with a restore record, so this can be undone.' }));
 
-  const confirmButton = node('button', {
-    class: ui.button({ tone: 'danger' }),
-    text: 'Delete',
-    onclick: async () => {
-      closeModal();
-      try {
-        const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete`, {
-          method: 'POST',
-          body: JSON.stringify({ file, alsoDelete: [...cascade] }),
-        });
-        if (state.selected === file || cascade.has(state.selected)) state.selected = null;
-        await openStore(state.storeId, { keepTab: true });
-        const count = result.record.files.length;
-        toast(count > 1 ? `Deleted ${count} memories` : `Deleted "${result.record.label || file}"`, {
-          action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
-        });
-      } catch (err) {
-        toast(err.message, { error: true });
-      }
-    },
-  });
-
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [
-      node('h3', { class: ui.modalTitle, text: `Delete "${preview.name || preview.file}"?` }),
-      node('p', { class: ui.note, text: preview.description || '' }),
-    ]),
+  const remove = { label: 'Delete', tone: 'danger', value: true };
+  const answer = openDialog({
+    title: `Delete "${preview.name || preview.file}"?`,
+    subtitle: preview.description || '',
     body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      confirmButton,
-    ]),
-  ]);
-
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
+    actions: [{ label: 'Cancel' }, remove],
+  });
   updateButton();
+  if (!await answer) return;
+
+  try {
+    const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ file, alsoDelete: [...cascade] }),
+    });
+    if (state.selected === file || cascade.has(state.selected)) state.selected = null;
+    await openStore(state.storeId, { keepTab: true });
+    const count = result.record.files.length;
+    toast(count > 1 ? `Deleted ${count} memories` : `Deleted "${result.record.label || file}"`, {
+      action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
+    });
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
 
   function updateButton() {
-    confirmButton.textContent = cascade.size ? `Delete ${cascade.size + 1} memories` : 'Delete';
+    remove.el.textContent = cascade.size ? `Delete ${cascade.size + 1} memories` : 'Delete';
   }
 }
 
-function openRememberPathDialog() {
+async function openRememberPathDialog() {
   const store = state.store;
   const input = node('input', {
     type: 'text',
@@ -1633,44 +1598,42 @@ function openRememberPathDialog() {
     spellcheck: 'false',
   });
 
-  const body = node('div', { class: ui.modalBody }, [
-    node('p', { class: ui.note, text: `The folder on disk is "${store.slug}", and its name is a lossy encoding of a path. No session transcript remains to recover the real one from, so tell it once and it will be used from now on.` }),
-    input,
-    node('p', { class: ui.noteTight, text: 'Saved to ~/.claude-memory-admin/paths.json. That file records slugs and folder paths only, never memory content, and is the one thing this app writes outside a memory/ directory.' }),
-  ]);
-
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [node('h3', { class: ui.modalTitle, text: 'Remember this project\u2019s path' })]),
-    body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      node('button', {
-        class: ui.button({ tone: 'primary' }),
-        text: 'Remember',
-        onclick: async () => {
+  const remembered = await openDialog({
+    title: 'Remember this project\u2019s path',
+    body: [
+      node('p', { class: ui.note, text: `The folder on disk is "${store.slug}", and its name is a lossy encoding of a path. No session transcript remains to recover the real one from, so tell it once and it will be used from now on.` }),
+      input,
+      node('p', { class: ui.noteTight, text: 'Saved to ~/.claude-memory-admin/paths.json. That file records slugs and folder paths only, never memory content, and is the one thing this app writes outside a memory/ directory.' }),
+    ],
+    actions: [
+      { label: 'Cancel' },
+      {
+        label: 'Remember',
+        tone: 'primary',
+        value: true,
+        guard: async () => {
           const value = input.value.trim();
-          if (!value) return;
+          if (!value) return false;
           try {
             await api(`/api/stores/${encodeURIComponent(state.storeId)}/path/remember`, {
               method: 'POST',
               body: JSON.stringify({ path: value }),
             });
           } catch (err) {
-            return toast(err.message, { error: true });
+            toast(err.message, { error: true });
+            return false;
           }
-          closeModal();
-          await reloadStores();
-          await openStore(state.storeId, { keepTab: true });
-          toast(`Remembered ${value}`);
+          return true;
         },
-      }),
-    ]),
-  ]);
+      },
+    ],
+    focus: input,
+  });
+  if (!remembered) return;
 
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
-  input.focus();
-  input.select();
+  await reloadStores();
+  await openStore(state.storeId, { keepTab: true });
+  toast(`Remembered ${input.value.trim()}`);
 }
 
 async function forgetProjectPath() {
@@ -1696,7 +1659,7 @@ async function openStoreDeleteDialog() {
     return toast('This store has no memory to delete');
   }
 
-  const body = node('div', { class: ui.modalBody });
+  const body = [];
   const removals = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Will be removed' })]);
   if (preview.hasIndex) {
     removals.append(node('div', { class: ui.willItem('remove'), text: `MEMORY.md  (${preview.indexLines} lines)  →  memory/.trash/` }));
@@ -1704,51 +1667,42 @@ async function openStoreDeleteDialog() {
   for (const entry of preview.files) {
     removals.append(node('div', { class: ui.willItem('remove'), text: `${entry.file}  →  memory/.trash/` }));
   }
-  body.append(removals);
+  body.push(removals);
 
-  body.append(node('div', { class: ui.willBlock }, [
+  body.push(node('div', { class: ui.willBlock }, [
     node('div', { class: ui.willTitle, text: 'Will be kept' }),
     node('div', { class: ui.willItem('keep'), text: state.store.kind === 'auto'
       ? 'Session transcripts (*.jsonl) and the project folder itself'
       : 'The agent-memory folder itself, and every other agent\u2019s memory' }),
   ]));
 
-  body.append(node('p', { class: ui.noteTight, text: 'Everything moves to .trash/ inside the store as one restore point, so it can be put back in a single step from the Trash tab.' }));
+  body.push(node('p', { class: ui.noteTight, text: 'Everything moves to .trash/ inside the store as one restore point, so it can be put back in a single step from the Trash tab.' }));
 
   if (state.store.kind === 'agent-project') {
-    body.append(node('p', { class: ui.subWarn, text: 'This store is checked into the repository. Deleting from it changes tracked files, and will show up in git status.' }));
+    body.push(node('p', { class: ui.subWarn, text: 'This store is checked into the repository. Deleting from it changes tracked files, and will show up in git status.' }));
   }
 
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [
-      node('h3', { class: ui.modalTitle, text: `Delete all memory for ${state.store.label}?` }),
-      node('p', { class: ui.note, text: `${preview.files.length} memories${preview.hasIndex ? ' + MEMORY.md' : ''}` }),
-    ]),
+  const go = await openDialog({
+    title: `Delete all memory for ${state.store.label}?`,
+    subtitle: `${preview.files.length} memories${preview.hasIndex ? ' + MEMORY.md' : ''}`,
     body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      node('button', {
-        class: ui.button({ tone: 'danger' }),
-        text: `Delete ${preview.files.length + (preview.hasIndex ? 1 : 0)} files`,
-        onclick: async () => {
-          closeModal();
-          try {
-            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/project/delete`, { method: 'POST' });
-            state.selected = null;
-            await openStore(state.storeId, { keepTab: true });
-            toast(`Cleared ${state.store.label}`, {
-              action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
-            });
-          } catch (err) {
-            toast(err.message, { error: true });
-          }
-        },
-      }),
-    ]),
-  ]);
+    actions: [
+      { label: 'Cancel' },
+      { label: `Delete ${preview.files.length + (preview.hasIndex ? 1 : 0)} files`, tone: 'danger', value: true },
+    ],
+  });
+  if (!go) return;
 
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
+  try {
+    const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/project/delete`, { method: 'POST' });
+    state.selected = null;
+    await openStore(state.storeId, { keepTab: true });
+    toast(`Cleared ${state.store.label}`, {
+      action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
+    });
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
 }
 
 function highlight(text, terms) {
@@ -1958,12 +1912,12 @@ async function openBulkDeleteDialog(files) {
   if (!files.length) return;
   const memories = files.map((file) => state.store.memories.find((m) => m.file === file)).filter(Boolean);
 
-  const body = node('div', { class: ui.modalBody });
+  const body = [];
   const removals = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: `${memories.length} memories will be trashed` })]);
   for (const memory of memories) {
     removals.append(node('div', { class: ui.willItem('remove'), text: `${memory.file}${memory.entry ? `  ·  MEMORY.md line ${memory.entry.index + 1}` : '  ·  not in the index'}` }));
   }
-  body.append(removals);
+  body.push(removals);
 
   const doomed = new Set(files);
   const breaking = [];
@@ -1975,41 +1929,35 @@ async function openBulkDeleteDialog(files) {
   if (breaking.length) {
     const block = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: `${breaking.length} link(s) from memories you are keeping will break` })]);
     for (const link of breaking) block.append(node('div', { class: ui.willItem('keep'), text: `${link.from}  →  [[${link.target}]]` }));
-    body.append(block);
+    body.push(block);
   }
 
-  body.append(node('p', { class: ui.noteTight, text: 'All of them go to memory/.trash/ as one restore point.' }));
+  body.push(node('p', { class: ui.noteTight, text: 'All of them go to memory/.trash/ as one restore point.' }));
 
-  const modal = node('div', { class: ui.modal }, [
-    node('header', { class: ui.modalHead }, [node('h3', { class: ui.modalTitle, text: `Delete ${memories.length} memories?` })]),
+  const go = await openDialog({
+    title: `Delete ${memories.length} memories?`,
     body,
-    node('footer', { class: ui.modalFoot }, [
-      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
-      node('button', {
-        class: ui.button({ tone: 'danger' }),
-        text: `Delete ${memories.length}`,
-        onclick: async () => {
-          closeModal();
-          try {
-            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete-many`, {
-              method: 'POST',
-              body: JSON.stringify({ files, label: `${memories.length} pruned memories` }),
-            });
-            state.pruneSelection.clear();
-            if (doomed.has(state.selected)) state.selected = null;
-            await openStore(state.storeId, { keepTab: true });
-            toast(`Deleted ${memories.length} memories`, {
-              action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
-            });
-          } catch (err) {
-            toast(err.message, { error: true });
-          }
-        },
-      }),
-    ]),
-  ]);
-  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
-  el('modal-root').append(backdrop);
+    actions: [
+      { label: 'Cancel' },
+      { label: `Delete ${memories.length}`, tone: 'danger', value: true },
+    ],
+  });
+  if (!go) return;
+
+  try {
+    const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/delete-many`, {
+      method: 'POST',
+      body: JSON.stringify({ files, label: `${memories.length} pruned memories` }),
+    });
+    state.pruneSelection.clear();
+    if (doomed.has(state.selected)) state.selected = null;
+    await openStore(state.storeId, { keepTab: true });
+    toast(`Deleted ${memories.length} memories`, {
+      action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
+    });
+  } catch (err) {
+    toast(err.message, { error: true });
+  }
 }
 
 let searchTimer = null;
@@ -2393,6 +2341,7 @@ async function init() {
     paintTheme();
   });
   document.addEventListener('keydown', (event) => {
+    if (isDialogOpen()) return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
     if (event.key === '/' && !typing) {
       event.preventDefault();
@@ -2407,8 +2356,7 @@ async function init() {
       return;
     }
     if (event.key === 'Escape') {
-      if (el('modal-root').firstChild) closeModal();
-      else if (state.search !== null) clearSearch();
+      if (state.search !== null) clearSearch();
       else if (!state.collapsed) setCollapsed(true);
     }
   });

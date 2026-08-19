@@ -260,12 +260,11 @@ export const graphLegend = 'absolute bottom-3 left-3.5 flex flex-wrap gap-3 roun
 export const graphLegendItem = 'flex items-center gap-1.5';
 export const graphLegendSwatch = 'inline-block size-2 rounded-full';
 
-export const modalBackdrop = 'fixed inset-0 z-100 flex items-center justify-center bg-scrim p-6';
-export const modal = 'flex max-h-[82vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-surface shadow-pop';
-export const modalHead = 'px-6 pt-5';
-export const modalTitle = 'mb-1 text-lg font-semibold tracking-tightest text-fg';
-export const modalBody = 'overflow-y-auto px-6 py-3.5';
-export const modalFoot = 'flex justify-end gap-2 border-t border-line px-6 pt-3.5 pb-4.5';
+export const dialog = 'backdrop:bg-scrim m-auto open:flex max-h-[82vh] w-[calc(100%-3rem)] max-w-2xl flex-col rounded-xl border border-line bg-surface shadow-pop';
+export const dialogHead = 'px-6 pt-5';
+export const dialogTitle = 'mb-1 text-lg font-semibold tracking-tightest text-fg';
+export const dialogBody = 'overflow-y-auto px-6 py-3.5';
+export const dialogFoot = 'flex justify-end gap-2 border-t border-line px-6 pt-3.5 pb-4.5';
 
 export const willBlock = 'mb-3.5';
 export const willTitle = 'mb-1.5 font-mono text-2xs font-semibold uppercase tracking-widest text-fg-subtle';

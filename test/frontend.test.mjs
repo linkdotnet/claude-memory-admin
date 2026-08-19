@@ -41,11 +41,28 @@ test('class names are never interpolated', () => {
 test('every ui token used by the frontend is exported', async () => {
   const ui = await import(new URL('../public/ui.mjs', import.meta.url));
   const exported = new Set(Object.keys(ui));
-  for (const file of ['public/app.mjs', 'public/graph.mjs']) {
+  for (const file of ['public/app.mjs', 'public/graph.mjs', 'public/dialog.mjs']) {
     const used = new Set([...read(file).matchAll(/(?<![/\w])ui\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]));
     const missing = [...used].filter((name) => !exported.has(name));
     assert.deepEqual(missing, [], `${file} uses undefined ui exports: ${missing}`);
   }
+});
+
+// A native confirm() ignores the theme and flattens the dialog body into one
+// string, which is the whole reason the dialog service exists.
+test('the frontend never falls back to a browser dialog', () => {
+  for (const file of frontendSources.filter((f) => f.endsWith('.mjs'))) {
+    const matches = [...read(file).matchAll(/(?<![\w.])(?:confirm|prompt|alert)\s*\(/g)];
+    assert.deepEqual(matches.map((m) => m[0]), [], `${file} calls a browser dialog`);
+  }
+});
+
+// Nothing renders the scrim any more except the dialog's own ::backdrop, so
+// dropping the variant would fail silently in the browser rather than here.
+test('the dialog paints its own backdrop', async () => {
+  const ui = await import(new URL('../public/ui.mjs', import.meta.url));
+  assert.match(ui.dialog, /backdrop:bg-scrim/);
+  assert.equal(ui.modalBackdrop, undefined);
 });
 
 test('the compiled stylesheet carries the semantic token layer', () => {
