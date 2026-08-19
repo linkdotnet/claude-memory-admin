@@ -253,3 +253,179 @@ export function unwrapWikilink(text, target) {
   });
   return { text: out, count };
 }
+
+function splitEntryLine(line) {
+  const match = line.match(INDEX_LINE);
+  if (!match || match[1] !== '') return null;
+  const file = match[3];
+  const marker = `](${file})`;
+  const linkEnd = line.indexOf(marker) + marker.length;
+  const tail = line.slice(linkEnd);
+  const separator = tail.match(HOOK_SEP);
+  return {
+    head: line.slice(0, linkEnd),
+    title: match[2].trim(),
+    file,
+    separator: separator ? separator[0] : null,
+    hook: tail.replace(HOOK_SEP, ''),
+  };
+}
+
+function normalizeSeparator(raw) {
+  const char = raw.trim();
+  return char === ':' ? ': ' : ` ${char} `;
+}
+
+export function dominantSeparator(parsed) {
+  const counts = new Map();
+  for (const entry of parsed.entries) {
+    const parts = splitEntryLine(entry.text);
+    if (!parts || !parts.separator) continue;
+    const separator = normalizeSeparator(parts.separator);
+    counts.set(separator, (counts.get(separator) || 0) + 1);
+  }
+  let best = ' — ';
+  let bestCount = 0;
+  for (const [separator, count] of counts) {
+    if (count > bestCount) {
+      best = separator;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function requireLine(lines, index, expectedText) {
+  if (!Number.isInteger(index) || index < 0 || index >= lines.length) {
+    throw new Error(`Line ${index} is out of range`);
+  }
+  if (typeof expectedText === 'string' && lines[index] !== expectedText) {
+    throw new Error('MEMORY.md changed since this was loaded - reload and try again');
+  }
+}
+
+export function setIndexHook(text, index, expectedText, hook) {
+  const lines = text.split('\n');
+  requireLine(lines, index, expectedText);
+
+  const parts = splitEntryLine(lines[index]);
+  if (!parts) throw new Error(`Line ${index + 1} is not an index entry`);
+
+  const next = String(hook ?? '');
+  if (/[\r\n]/.test(next)) throw new Error('A hook has to stay on one line');
+  const trimmed = next.trim();
+
+  const separator = parts.separator || dominantSeparator(parseIndex(text));
+  const before = lines[index];
+  lines[index] = trimmed ? `${parts.head}${separator}${trimmed}` : parts.head;
+  return { text: lines.join('\n'), before, after: lines[index] };
+}
+
+export function entryBlock(lines, index) {
+  const block = [index];
+  for (let i = index + 1; i < lines.length; i++) {
+    if (!lines[i].trim()) break;
+    if (!/^[ \t]/.test(lines[i])) break;
+    block.push(i);
+  }
+  return block;
+}
+
+export function moveIndexEntry(text, index, expectedText, toIndex) {
+  const lines = text.split('\n');
+  requireLine(lines, index, expectedText);
+  if (!splitEntryLine(lines[index])) throw new Error(`Line ${index + 1} is not an index entry`);
+
+  const block = entryBlock(lines, index);
+  const target = Number(toIndex);
+  if (!Number.isInteger(target) || target < 0 || target > lines.length) {
+    throw new Error(`Cannot move to line ${toIndex}`);
+  }
+  if (target >= index && target <= block[block.length - 1] + 1) {
+    throw new Error('That target is inside the entry being moved');
+  }
+
+  const moved = block.map((i) => ({ index: i, text: lines[i] }));
+  const dropped = new Set(block);
+  const kept = lines.filter((_, i) => !dropped.has(i));
+  const at = target - block.filter((i) => i < target).length;
+  kept.splice(at, 0, ...moved.map((entry) => entry.text));
+  return { text: kept.join('\n'), moved, toIndex: at };
+}
+
+export function retargetWikilink(text, from, to) {
+  let count = 0;
+  const pattern = new RegExp(WIKILINK.source, 'g');
+  const out = text.replace(pattern, (match, name, alias) => {
+    if (name.trim() !== from) return match;
+    count += 1;
+    return alias === undefined ? `[[${to}]]` : `[[${to}|${alias}]]`;
+  });
+  return { text: out, count };
+}
+
+function endOfContent(lines, limit, floor = 0) {
+  let at = limit;
+  while (at > floor && !lines[at - 1].trim()) at -= 1;
+  return at;
+}
+
+export function sectionInsertIndex(parsed, section) {
+  const heading = section
+    ? parsed.parsedLines.find((line) => line.kind === 'heading' && line.section === section)
+    : null;
+  if (!heading) return endOfContent(parsed.lines, parsed.lines.length);
+
+  let end = parsed.lines.length;
+  for (const line of parsed.parsedLines) {
+    if (line.kind === 'heading' && line.index > heading.index && line.level <= heading.level) {
+      end = line.index;
+      break;
+    }
+  }
+
+  const entries = parsed.entries.filter((entry) => entry.index > heading.index && entry.index < end);
+  if (entries.length) {
+    const last = entries[entries.length - 1];
+    return entryBlock(parsed.lines, last.index).pop() + 1;
+  }
+
+  return endOfContent(parsed.lines, end, heading.index + 1);
+}
+
+export function insertIndexEntry(text, at, line) {
+  const lines = text.split('\n');
+  const target = Math.max(0, Math.min(Number(at), lines.length));
+  lines.splice(target, 0, line);
+  return { text: lines.join('\n'), index: target };
+}
+
+export function topInsertIndex(parsed) {
+  const { lines } = parsed;
+  let at = 0;
+
+  if (lines.length && lines[0].trim() === '---') {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') {
+        at = i + 1;
+        break;
+      }
+    }
+  }
+
+  while (at < lines.length && !lines[at].trim()) at += 1;
+  if (parsed.parsedLines.some((line) => line.index === at && line.kind === 'heading')) {
+    at += 1;
+    while (at < lines.length && !lines[at].trim()) at += 1;
+  }
+  return at;
+}
+
+export function sectionStartIndex(parsed, section) {
+  const heading = parsed.parsedLines.find((line) => line.kind === 'heading' && line.section === section);
+  if (!heading) return topInsertIndex(parsed);
+
+  let at = heading.index + 1;
+  while (at < parsed.lines.length && !parsed.lines[at].trim()) at += 1;
+  return at;
+}

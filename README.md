@@ -97,13 +97,16 @@ project is to the cliff, and makes it quick to get back under it.
 - **Graph** the wikilinks between memories. Hovering dims everything that is not
   a neighbour, which is the only practical way to read a dense cluster.
 - **Health**: orphans, dangling pointers, broken wikilinks, files linked only
-  mid-sentence, `name` fields that disagree with the filename.
+  mid-sentence, `name` fields that disagree with the filename. An orphan can be
+  given the `MEMORY.md` bullet it is missing without leaving the page.
 - **Dates you can trust.** Claude Code stamps `modified` into frontmatter, but
   only on files that already have some, and never adds frontmatter to a file
   without it. Anything falling back to the file's mtime is labelled, because
   mtime is reset by any copy or restore.
 - **Context**: what a session starting in this project would load as
   *instructions*, which is the other half of the startup budget (see below).
+- **Settings**: every layer Claude Code would read, side by side, with the value
+  that wins and the ones it shadows (see below).
 - **Delete with cascade**, always reversible.
 
 Everything above works the same on both kinds of store. The load meter, graph,
@@ -129,10 +132,21 @@ session and, past the limit, silently stops loading.
   remembered.
 - **Long hooks**. The hook is the text after the dash in `MEMORY.md`. A
   400-character hook can cost more than the memory it points at, and shortening
-  it is the cheapest win available.
+  it is the cheapest win available. **Edit hook** rewrites one in place, with the
+  projected load meter next to the character count, and changes nothing but the
+  text after the separator - the indent, title, link and the separator character
+  itself are kept byte for byte, so a project that writes ` - ` keeps writing it.
+- **Move above the cutoff**. Past the limit, an entry is on disk but invisible.
+  **Move up** relocates its bullet, and the indented lines under it, to the end
+  of any section that starts above the cutoff. It moves one entry rather than
+  making room, so whatever is now last drops below the line instead - the tab
+  says so before you do it.
 - **Possible overlap**. Pairs of memories ranked by shared *rare* vocabulary, to
   surface the same lesson saved three times from three sessions. It is a hint,
-  not a verdict.
+  not a verdict. **Merge** folds one into the other: the body moves under a
+  heading you name, every `[[wikilink]]` that pointed at the source is repointed
+  rather than broken, a link the survivor had to the source becomes plain text
+  instead of a self-link, and the two index bullets collapse to one.
 - **Bulk prune**. Sort by age, size, or inbound links, tick several, delete them
   as one restore point.
 
@@ -169,7 +183,29 @@ This is re-derived from the documented resolution rules rather than reported by
 Claude Code, and the tab says so. Run `/context` in a session for the ground
 truth, or the `InstructionsLoaded` hook to log exactly what loaded and why.
 
-## Deleting is reversible
+## Which settings are actually in force
+
+Five files can set the keys this tool cares about, and the one everybody edits,
+`~/.claude/settings.json`, is the weakest of them. The **Settings** tab reads all
+five and shows, per key, the value that wins and the ones it shadows, struck
+through, each labelled with the file it came from:
+
+`autoMemoryEnabled`, `autoMemoryDirectory`, `claudeMdExcludes` and
+`cleanupPeriodDays`, plus `CLAUDE_CODE_DISABLE_AUTO_MEMORY` when it is set in the
+environment, where it outranks every file.
+
+It also names the failures that are otherwise silent:
+
+- A settings file that exists but is not valid JSON. Claude Code ignores the
+  whole file, so every value in it is doing nothing, and nothing says so.
+- A file that parses but is not an object, or cannot be read at all.
+- An `autoMemoryDirectory` that is neither absolute nor `~/`-prefixed.
+- A value Claude Code accepts the key of but not the number, like a
+  `cleanupPeriodDays` below 1: the tab shows what is written *and* what applies.
+
+The tab is read-only. It reports what is configured; it never writes a setting.
+
+## Everything it writes is reversible
 
 Delete shows a preview first: the exact lines that will go, the prose mentions it
 will deliberately leave alone, and which other memories link here and will break.
@@ -185,8 +221,19 @@ exists. The markup goes and the words stay, so `see [[gone]] for details` become
 `see gone for details`.
 
 Everything lands in `memory/.trash/` with a restore record and comes back from the
-Trash tab. The app never creates memories and never rewrites their prose beyond
-clearing a dead link's brackets.
+Trash tab, one undo per operation however many files it touched.
+
+The app never writes a memory file of its own. It edits `MEMORY.md` a line at a
+time - a hook rewritten, a bullet added or moved - and each of those keeps every
+other byte of the file. Adding a bullet to a project that has no `MEMORY.md` yet
+is the one case where a file is created, and undoing it deletes that file again,
+but only if nothing has touched it since. **Merge** is the one action that
+rewrites prose inside a memory, which is why it shows you every file it will
+touch first.
+
+Each index edit keeps a copy of the whole `MEMORY.md` in the trash rather than a
+note of which lines changed, so undo means writing back the exact bytes that were
+there instead of recomputing them.
 
 ## Usage
 
@@ -219,8 +266,12 @@ claude-memory-admin --root /tmp/memory-snapshot
 - `MEMORY.md` is replaced atomically (temp file, `fsync`, `rename`) with a backup
   restored if anything throws.
 - A test asserts that parsing and rewriting every real `MEMORY.md` with no
-  deletions reproduces it byte for byte. Real indexes are hand-written prose with
-  headings and nested bullets, and mangling one would be silent.
+  deletions reproduces it byte for byte, that rewriting a hook and putting the
+  original back does too, and that no edit ever disturbs a line it was not
+  aimed at. Real indexes are hand-written prose with headings and nested bullets,
+  and mangling one would be silent.
+- Every index edit is guarded by the text the browser last saw, so an edit made
+  against a stale view is refused rather than applied to the wrong line.
 
 ## Development
 
@@ -247,7 +298,7 @@ ready to serve and never builds anything. After editing the source, run
 | `bin/claude-memory-admin.mjs` | CLI entry point and argument parsing |
 | `server.mjs` | HTTP server: static files + JSON API |
 | `src/projects.mjs` | Project discovery, slug → real path resolution |
-| `src/settings.mjs` | Layered reads of Claude Code's settings files |
+| `src/settings.mjs` | Layered reads of Claude Code's settings files, and the report behind the Settings tab |
 | `src/pathcache.mjs` | The opt-in record of confirmed project paths |
 | `src/stores.mjs` | Store discovery: auto memory and the three agent scopes |
 | `src/instructions.mjs` | CLAUDE.md chain, `@` imports and rules resolution |
@@ -255,7 +306,7 @@ ready to serve and never builds anything. After editing the source, run
 | `src/model.mjs` | Joins index, files, graph and health into one model |
 | `src/stats.mjs` | Load-limit accounting and overlap detection |
 | `src/search.mjs` | Full-text search across every store |
-| `src/mutate.mjs` | Delete / restore / unlink, the only code that writes |
+| `src/mutate.mjs` | Delete / edit / merge / restore, the only code that writes |
 | `styles/app.css` | Tailwind source, compiled to `public/styles.css` |
 | `public/` | Frontend |
 

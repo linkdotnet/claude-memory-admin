@@ -11,15 +11,22 @@ import { spawn } from 'node:child_process';
 import { projectsRoot, resolveRoot } from './src/projects.mjs';
 import { buildStore } from './src/model.mjs';
 import { resolveInstructions } from './src/instructions.mjs';
+import { settingsReport } from './src/settings.mjs';
 import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
 import {
+  addIndexEntry,
+  addIndexEntryPreview,
   deleteIndexLine,
   deleteMemories,
   deleteMemory,
   deletePreview,
   deleteProject,
+  editIndexHook,
+  mergeMemories,
+  mergePreview,
+  moveIndexEntry,
   projectDeletePreview,
   removeWikilink,
   restoreMemory,
@@ -119,6 +126,11 @@ function requireStore(id) {
   return store;
 }
 
+function storeProjectDir(store) {
+  if (store.kind !== 'auto') return store.projectPath || null;
+  return store.pathExists ? store.path : null;
+}
+
 async function handleApi(req, res, url) {
   const segments = url.pathname.split('/').filter(Boolean); // ['api', 'projects', ...]
 
@@ -155,11 +167,13 @@ async function handleApi(req, res, url) {
   // Read-only, and scoped to a directory the app already discovered rather than
   // one named in the request.
   if (action === 'instructions' && req.method === 'GET') {
-    const projectDir = store.kind === 'auto'
-      ? (store.pathExists ? store.path : null)
-      : store.projectPath;
+    const projectDir = storeProjectDir(store);
     if (!projectDir) return sendJson(res, 200, { projectDir: null, files: [], problems: [], excluded: [], totals: null });
     return sendJson(res, 200, resolveInstructions(projectDir));
+  }
+
+  if (action === 'settings' && req.method === 'GET') {
+    return sendJson(res, 200, settingsReport({ projectDir: storeProjectDir(store) }));
   }
 
   if (action === 'delete-preview' && req.method === 'POST') {
@@ -207,6 +221,36 @@ async function handleApi(req, res, url) {
   if (action === 'path/forget' && req.method === 'POST') {
     if (store.kind !== 'auto') throw new Error('Only project stores have a path to remember');
     return sendJson(res, 200, forgetPath(store.slug));
+  }
+
+  if (action === 'index/hook' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, editIndexHook(dir, body));
+  }
+
+  if (action === 'index/move' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, moveIndexEntry(dir, body));
+  }
+
+  if (action === 'index/add-preview' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, addIndexEntryPreview(dir, body));
+  }
+
+  if (action === 'index/add' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, addIndexEntry(dir, body));
+  }
+
+  if (action === 'merge-preview' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, mergePreview(dir, body));
+  }
+
+  if (action === 'merge' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, mergeMemories(dir, body));
   }
 
   if (action === 'index-line/delete' && req.method === 'POST') {

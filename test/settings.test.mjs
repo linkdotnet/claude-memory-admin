@@ -9,7 +9,9 @@ import {
   cleanupPeriodDays,
   managedSettingsFiles,
   resolveMemoryDirectory,
+  settingsDiagnostics,
   settingsLayers,
+  settingsReport,
 } from '../src/settings.mjs';
 
 // These tests exercise the layers a test can control: project, local and the
@@ -103,4 +105,106 @@ test('a malformed settings file is skipped rather than throwing', { skip: manage
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function withFiles(files, fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-admin-settings-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.claude'));
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, '.claude', name), body);
+    }
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const find = (list, scope) => list.find((entry) => entry.scope === scope);
+
+test('a settings file that does not parse is reported, not just skipped', { skip: managed }, () => {
+  withFiles({ 'settings.json': '{ not json' }, (dir) => {
+    const layer = find(settingsDiagnostics({ projectDir: dir }), 'project');
+    assert.equal(layer.status, 'unparseable');
+    assert.ok(layer.error);
+
+    assert.ok(!settingsLayers({ projectDir: dir }).some((l) => l.scope === 'project'));
+
+    const problem = settingsReport({ projectDir: dir }).problems.find((p) => p.kind === 'unparseable');
+    assert.ok(problem, 'the report should surface the broken file');
+    assert.equal(problem.scope, 'project');
+  });
+});
+
+test('a settings file that is valid JSON but not an object is reported', { skip: managed }, () => {
+  withFiles({ 'settings.json': '["nope"]' }, (dir) => {
+    assert.equal(find(settingsDiagnostics({ projectDir: dir }), 'project').status, 'not-object');
+  });
+});
+
+test('an absent settings file is not a problem', { skip: managed }, () => {
+  withFiles({}, (dir) => {
+    const report = settingsReport({ projectDir: dir });
+    assert.equal(find(report.layers, 'project').status, 'absent');
+    assert.deepEqual(report.problems.filter((p) => p.scope === 'project'), []);
+  });
+});
+
+test('the report marks the winning layer and keeps the shadowed ones', { skip: managed }, () => {
+  withFiles({
+    'settings.json': JSON.stringify({ autoMemoryEnabled: true }),
+    'settings.local.json': JSON.stringify({ autoMemoryEnabled: false }),
+  }, (dir) => {
+    const key = settingsReport({ projectDir: dir }).keys.find((entry) => entry.key === 'autoMemoryEnabled');
+    assert.equal(key.effective.value, false);
+    assert.equal(key.effective.scope, 'local');
+
+    assert.equal(key.values.length, 2);
+    assert.equal(key.values[0].scope, 'local');
+    assert.equal(key.values[0].wins, true);
+    assert.equal(key.values[1].scope, 'project');
+    assert.equal(key.values[1].wins, false);
+  });
+});
+
+test('a key nothing sets reports its fallback and no effective layer', { skip: managed }, () => {
+  withFiles({}, (dir) => {
+    const key = settingsReport({ projectDir: dir }).keys.find((entry) => entry.key === 'claudeMdExcludes');
+    assert.equal(key.effective, null);
+    assert.deepEqual(key.fallback, []);
+    assert.deepEqual(key.values, []);
+  });
+});
+
+test('cleanupPeriodDays reports both the configured value and the one in force', { skip: managed }, () => {
+  withFiles({ 'settings.json': JSON.stringify({ cleanupPeriodDays: 0 }) }, (dir) => {
+    const key = settingsReport({ projectDir: dir }).keys.find((entry) => entry.key === 'cleanupPeriodDays');
+    assert.equal(key.effective.value, 0);
+    assert.equal(key.normalized, cleanupPeriodDays({ projectDir: dir }));
+    assert.equal(key.normalized, 30);
+  });
+});
+
+test('the report names the environment override', { skip: managed }, () => {
+  const previous = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+  process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1';
+  try {
+    withFiles({ 'settings.json': JSON.stringify({ autoMemoryEnabled: true }) }, (dir) => {
+      const report = settingsReport({ projectDir: dir });
+      assert.equal(report.env.value, '1');
+      assert.equal(report.env.overrides, 'autoMemoryEnabled');
+    });
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+    else process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = previous;
+  }
+});
+
+test('an unusable autoMemoryDirectory reaches the report as a problem', { skip: managed }, () => {
+  withFiles({ 'settings.json': JSON.stringify({ autoMemoryDirectory: 'relative/store' }) }, (dir) => {
+    const problem = settingsReport({ projectDir: dir }).problems
+      .find((p) => p.kind === 'invalid-auto-memory-directory');
+    assert.ok(problem);
+    assert.match(problem.detail, /relative\/store/);
+  });
 });

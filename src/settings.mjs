@@ -44,14 +44,38 @@ export function managedSettingsFiles() {
   return files;
 }
 
-function readJson(file) {
+function readJsonDetailed(file) {
+  let raw;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    // Absent, unreadable, or not valid JSON. Claude Code would ignore it too.
-    return null;
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    const status = err.code === 'ENOENT' || err.code === 'ENOTDIR' ? 'absent' : 'unreadable';
+    return { status, data: null, error: status === 'absent' ? null : err.message };
   }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { status: 'unparseable', data: null, error: err.message };
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { status: 'not-object', data: null, error: 'the file is valid JSON but not an object' };
+  }
+  return { status: 'ok', data: parsed, error: null };
+}
+
+function settingsCandidates({ projectDir = null, settingsFile = null } = {}) {
+  const candidates = [];
+  for (const file of managedSettingsFiles()) candidates.push({ scope: 'managed', file });
+  if (settingsFile) candidates.push({ scope: 'settings-flag', file: settingsFile });
+  if (projectDir) {
+    candidates.push({ scope: 'local', file: path.join(projectDir, '.claude', 'settings.local.json') });
+    candidates.push({ scope: 'project', file: path.join(projectDir, '.claude', 'settings.json') });
+  }
+  candidates.push({ scope: 'user', file: USER_SETTINGS });
+  return candidates;
 }
 
 /**
@@ -64,20 +88,11 @@ function readJson(file) {
  * cwd (for the store location, which is decided before any project is chosen) or
  * a specific project's resolved path (for that project's auto memory state).
  */
-export function settingsLayers({ projectDir = null, settingsFile = null } = {}) {
-  const candidates = [];
-  for (const file of managedSettingsFiles()) candidates.push({ scope: 'managed', file });
-  if (settingsFile) candidates.push({ scope: 'settings-flag', file: settingsFile });
-  if (projectDir) {
-    candidates.push({ scope: 'local', file: path.join(projectDir, '.claude', 'settings.local.json') });
-    candidates.push({ scope: 'project', file: path.join(projectDir, '.claude', 'settings.json') });
-  }
-  candidates.push({ scope: 'user', file: USER_SETTINGS });
-
+export function settingsLayers(options = {}) {
   const layers = [];
-  for (const candidate of candidates) {
-    const data = readJson(candidate.file);
-    if (data) layers.push({ ...candidate, data });
+  for (const candidate of settingsCandidates(options)) {
+    const read = readJsonDetailed(candidate.file);
+    if (read.status === 'ok') layers.push({ ...candidate, data: read.data });
   }
   return layers;
 }
@@ -148,4 +163,90 @@ export function cleanupPeriodDays(options = {}) {
   const found = lookup(settingsLayers(options), 'cleanupPeriodDays');
   const value = Number(found?.value);
   return Number.isFinite(value) && value >= 1 ? value : DEFAULT_CLEANUP_PERIOD_DAYS;
+}
+
+export const REPORTED_KEYS = [
+  {
+    key: 'autoMemoryEnabled',
+    fallback: true,
+    detail: 'Whether Claude Code still writes new memories for this project.',
+  },
+  {
+    key: 'autoMemoryDirectory',
+    fallback: null,
+    detail: 'Where the memory store lives. Unset means ~/.claude/projects.',
+  },
+  {
+    key: 'claudeMdExcludes',
+    fallback: [],
+    detail: 'Instruction files a session skips when it starts.',
+  },
+  {
+    key: 'cleanupPeriodDays',
+    fallback: DEFAULT_CLEANUP_PERIOD_DAYS,
+    detail: 'How long session transcripts are kept. Memory files are never swept.',
+  },
+];
+
+export function settingsDiagnostics(options = {}) {
+  return settingsCandidates(options).map((candidate) => {
+    const read = readJsonDetailed(candidate.file);
+    return { scope: candidate.scope, file: candidate.file, status: read.status, error: read.error };
+  });
+}
+
+export function settingsReport(options = {}) {
+  const reads = settingsCandidates(options).map((candidate) => ({
+    ...candidate,
+    ...readJsonDetailed(candidate.file),
+  }));
+  const layers = reads.map(({ scope, file, status, error }) => ({ scope, file, status, error }));
+
+  const keys = REPORTED_KEYS.map(({ key, fallback, detail }) => {
+    const values = reads
+      .filter((read) => read.status === 'ok' && Object.prototype.hasOwnProperty.call(read.data, key))
+      .map((read) => ({ scope: read.scope, file: read.file, value: read.data[key], wins: false }));
+    if (values.length) values[0].wins = true;
+    const winner = values[0] || null;
+
+    return {
+      key,
+      detail,
+      fallback,
+      effective: winner ? { value: winner.value, scope: winner.scope, file: winner.file } : null,
+      values,
+    };
+  });
+
+  const cleanup = keys.find((entry) => entry.key === 'cleanupPeriodDays');
+  cleanup.normalized = cleanupPeriodDays(options);
+
+  const raw = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+  const disabling = Boolean(raw && raw !== '0' && raw !== 'false');
+
+  const problems = layers
+    .filter((layer) => layer.status !== 'ok' && layer.status !== 'absent')
+    .map((layer) => ({ kind: layer.status, scope: layer.scope, file: layer.file, detail: layer.error }));
+
+  const directory = resolveMemoryDirectory(options);
+  if (directory && directory.invalid) {
+    problems.push({
+      kind: 'invalid-auto-memory-directory',
+      scope: directory.scope,
+      file: directory.file,
+      detail: `"${directory.raw}" is ${directory.invalid}`,
+    });
+  }
+
+  return {
+    projectDir: options.projectDir ?? null,
+    layers,
+    keys,
+    env: {
+      name: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY',
+      value: raw ?? null,
+      overrides: disabling ? 'autoMemoryEnabled' : null,
+    },
+    problems,
+  };
 }

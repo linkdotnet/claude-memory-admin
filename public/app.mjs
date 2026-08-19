@@ -137,6 +137,7 @@ const TABS = [
   { id: 'prune', label: 'Prune' },
   { id: 'context', label: 'Context' },
   { id: 'health', label: 'Health' },
+  { id: 'settings', label: 'Settings' },
   { id: 'trash', label: 'Trash' },
 ];
 
@@ -559,7 +560,11 @@ function renderIssue(item, memories) {
     return issue(
       `Not referenced anywhere in MEMORY.md: ${item.file}`,
       `"${memory?.name || item.file}" exists on disk but nothing points to it, so Claude will not load it.`,
-      { bad, action: { label: 'Open', run: () => selectMemory(item.file) } },
+      {
+        bad,
+        secondary: { label: 'Open', run: () => selectMemory(item.file) },
+        action: { label: 'Add to MEMORY.md', run: () => openAddEntryDialog(item.file) },
+      },
     );
   }
 
@@ -568,7 +573,11 @@ function renderIssue(item, memories) {
     return issue(
       `Linked mid-sentence, not indexed: ${item.file}`,
       `"${memory?.name || item.file}" is mentioned inside prose in MEMORY.md but has no index bullet of its own.`,
-      { bad, action: { label: 'Open', run: () => selectMemory(item.file) } },
+      {
+        bad,
+        secondary: { label: 'Open', run: () => selectMemory(item.file) },
+        action: { label: 'Add to MEMORY.md', run: () => openAddEntryDialog(item.file) },
+      },
     );
   }
 
@@ -605,6 +614,402 @@ function renderIssue(item, memories) {
   return issue(item.kind, JSON.stringify(item));
 }
 
+const SETTINGS_PROBLEMS = {
+  unparseable: (p) => [
+    `Not valid JSON: ${p.scope} settings`,
+    `${p.file} — Claude Code cannot read this file either, so every value in it is being ignored. ${p.detail}`,
+  ],
+  unreadable: (p) => [
+    `Cannot be read: ${p.scope} settings`,
+    `${p.file} — ${p.detail}`,
+  ],
+  'not-object': (p) => [
+    `Not a settings object: ${p.scope} settings`,
+    `${p.file} — ${p.detail}`,
+  ],
+  'invalid-auto-memory-directory': (p) => [
+    'autoMemoryDirectory cannot be used',
+    `${p.file} — ${p.detail}. Claude Code accepts only an absolute or ~/-prefixed path.`,
+  ],
+};
+
+const show = (value) => (value === undefined ? 'unset' : JSON.stringify(value));
+
+async function renderSettings(container) {
+  container.append(node('p', { class: ui.note, text: 'Reading settings files…' }));
+  let data;
+  try {
+    data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/settings`);
+  } catch (err) {
+    container.textContent = '';
+    return container.append(node('p', { class: ui.note, text: err.message }));
+  }
+  if (state.tab !== 'settings') return;
+  container.textContent = '';
+
+  container.append(node('p', { class: ui.noteTight, text: 'What Claude Code would read for this store, in precedence order: managed policy first, then project and local settings, then your user file. This tab is read-only — it reports what is configured, it never changes it.' }));
+
+  if (!data.projectDir) {
+    container.append(node('p', { class: ui.subWarn, text: 'This store has no resolved project directory, so its project and local settings layers could not be consulted. Values below come from managed policy and your user file only.' }));
+  }
+
+  if (data.problems.length) {
+    container.append(node('div', { class: ui.sectionLabel, text: `Problems · ${data.problems.length}` }));
+    for (const problem of data.problems) {
+      const describe = SETTINGS_PROBLEMS[problem.kind];
+      const [title, detail] = describe ? describe(problem) : [problem.kind, problem.file || ''];
+      container.append(node('div', { class: ui.issue(true) }, [
+        node('div', { class: ui.issueBody }, [
+          node('div', { class: ui.issueTitle, text: title }),
+          node('div', { class: ui.issueDetail, text: detail }),
+        ]),
+      ]));
+    }
+  }
+
+  if (data.env.overrides) {
+    container.append(node('div', { class: ui.sectionLabel, text: 'Environment override' }));
+    container.append(node('div', { class: ui.issue(false) }, [
+      node('div', { class: ui.issueBody }, [
+        node('div', { class: ui.issueTitle, text: `${data.env.name}=${data.env.value}` }),
+        node('div', { class: ui.issueDetail, text: `Set in this shell, so it outranks every settings file and forces ${data.env.overrides} off. The store will not grow while it is set.` }),
+      ]),
+    ]));
+  }
+
+  for (const entry of data.keys) {
+    const card = node('div', { class: ui.card });
+    const head = node('div', { class: ui.settingsKeyHead }, [
+      node('span', { class: ui.settingsKeyName, text: entry.key }),
+      node('span', {
+        class: ui.settingsEffective,
+        text: entry.effective ? show(entry.effective.value) : `${show(entry.fallback)} (default)`,
+      }),
+    ]);
+    if (entry.effective) {
+      head.append(node('span', { class: ui.scopeBadge(entry.effective.scope), text: entry.effective.scope }));
+    }
+    card.append(head);
+    card.append(node('p', { class: ui.noteTight, text: entry.detail }));
+
+    if (entry.normalized !== undefined && entry.effective && entry.normalized !== entry.effective.value) {
+      card.append(node('div', { class: ui.issue(false) }, [
+        node('div', { class: ui.issueBody }, [
+          node('div', { class: ui.issueTitle, text: `Configured ${show(entry.effective.value)}, but ${show(entry.normalized)} applies` }),
+          node('div', { class: ui.issueDetail, text: 'Claude Code ignores a value it cannot use and falls back to the default.' }),
+        ]),
+      ]));
+    }
+
+    if (!entry.values.length) {
+      card.append(node('p', { class: ui.note, text: 'No settings file sets this, so the built-in default applies.' }));
+    } else {
+      for (const value of entry.values) {
+        card.append(node('div', { class: ui.settingsLayerRow }, [
+          node('span', { class: ui.scopeBadge(value.scope), text: value.scope }),
+          node('span', { class: ui.settingsLayerValue(value.wins), text: show(value.value) }),
+          node('span', { class: ui.settingsLayerFile, text: value.file }),
+          value.wins ? node('span', { class: ui.badge('ok'), text: 'wins' }) : null,
+        ]));
+      }
+    }
+    container.append(card);
+  }
+
+  container.append(node('div', { class: ui.sectionLabel, text: `Files consulted · ${data.layers.length}` }));
+  const files = node('div', { class: ui.card });
+  for (const layer of data.layers) {
+    files.append(node('div', { class: ui.settingsLayerRow }, [
+      node('span', { class: ui.scopeBadge(layer.scope), text: layer.scope }),
+      node('span', { class: ui.settingsLayerValue(layer.status === 'ok'), text: layer.status }),
+      node('span', { class: ui.settingsLayerFile, text: layer.file }),
+    ]));
+  }
+  container.append(files);
+}
+
+const byteLength = (text) => new TextEncoder().encode(text).length;
+
+function indexEntryAt(lineIndex) {
+  return state.store.index?.entries.find((entry) => entry.index === lineIndex) || null;
+}
+
+function sectionsAbove(limit) {
+  const seen = [];
+  for (const line of state.store.index?.lines || []) {
+    if (line.kind !== 'heading') continue;
+    if (limit !== null && line.index >= limit) continue;
+    if (line.section && !seen.includes(line.section)) seen.push(line.section);
+  }
+  return seen;
+}
+
+async function runIndexEdit(action, body, message) {
+  try {
+    const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    await openStore(state.storeId, { keepTab: true });
+    toast(message(result), { action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) } });
+    return result;
+  } catch (err) {
+    toast(err.message, { error: true });
+    return null;
+  }
+}
+
+function openHookEditor(row, lineIndex) {
+  const entry = indexEntryAt(lineIndex);
+  if (!entry) return toast('MEMORY.md has changed - reload and try again', { error: true });
+
+  const stats = state.store.stats.index;
+  const editor = node('div', { class: ui.hookEditor });
+  const field = node('textarea', { class: ui.textArea, spellcheck: 'false' });
+  field.value = entry.hook;
+
+  const counter = node('span');
+  const projection = node('span');
+  const readout = node('div', { class: ui.charCount }, [counter, projection]);
+
+  const save = node('button', { class: ui.buttonPrimarySmall, text: 'Save' });
+  const cancel = node('button', { class: ui.buttonSmall, text: 'Cancel', onclick: () => renderTab() });
+
+  function update() {
+    const next = field.value.trim();
+    const delta = byteLength(next) - byteLength(entry.hook);
+    const projected = Math.max(stats.linePercent, ((stats.bytes + delta) / stats.byteLimit) * 100);
+
+    counter.textContent = `${next.length} characters, was ${entry.hook.length}`;
+    projection.textContent = `index ${Math.round(stats.worstPercent)}% → ${Math.round(projected)}%`;
+    readout.className = next.length > 200 ? ui.charCountOver : ui.charCount;
+    save.disabled = next === entry.hook;
+  }
+
+  field.addEventListener('input', update);
+  save.onclick = () => runIndexEdit(
+    'index/hook',
+    { lineIndex, expectedText: entry.text, hook: field.value },
+    () => 'Hook shortened',
+  );
+
+  editor.append(
+    node('div', { class: ui.willTitle, text: 'Hook' }),
+    field,
+    readout,
+    node('div', { class: ui.hookEditorFoot }, [cancel, save]),
+  );
+  row.textContent = '';
+  row.append(editor);
+  update();
+  field.focus();
+  field.select();
+}
+
+function openMoveDialog(entry) {
+  const current = indexEntryAt(entry.index);
+  if (!current) return toast('MEMORY.md has changed - reload and try again', { error: true });
+
+  const { cutoff } = state.store.stats.index;
+  const sections = sectionsAbove(cutoff ? cutoff.rawLine : null);
+  const picker = node('select', { class: ui.select });
+  picker.append(node('option', { value: '', text: 'Top of MEMORY.md' }));
+  for (const section of sections) picker.append(node('option', { value: section, text: `Start of "${section}"` }));
+
+  const body = node('div', { class: ui.modalBody }, [
+    node('p', { class: ui.noteTight, text: `"${current.title}" sits at line ${current.index + 1}, past the cutoff at line ${cutoff ? cutoff.rawLine + 1 : '-'}, so Claude never loads it. Moving it up puts it back inside the loaded part of the index - which pushes whatever is now last past the cutoff instead.` }),
+    node('div', { class: ui.willBlock }, [
+      node('div', { class: ui.willTitle, text: 'Will move' }),
+      node('div', { class: ui.willItem('keep'), text: current.text }),
+    ]),
+    node('label', { class: ui.willTitle, text: 'Move to' }),
+    picker,
+  ]);
+
+  const modal = node('div', { class: ui.modal }, [
+    node('header', { class: ui.modalHead }, [node('h3', { class: ui.modalTitle, text: 'Move this entry above the cutoff' })]),
+    body,
+    node('footer', { class: ui.modalFoot }, [
+      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
+      node('button', {
+        class: ui.button({ tone: 'primary' }),
+        text: 'Move',
+        onclick: async () => {
+          closeModal();
+          await runIndexEdit(
+            'index/move',
+            picker.value
+              ? { lineIndex: current.index, expectedText: current.text, section: picker.value }
+              : { lineIndex: current.index, expectedText: current.text, top: true },
+            () => 'Entry moved',
+          );
+        },
+      }),
+    ]),
+  ]);
+
+  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
+  el('modal-root').append(backdrop);
+}
+
+async function openAddEntryDialog(file) {
+  let preview;
+  try {
+    preview = await api(`/api/stores/${encodeURIComponent(state.storeId)}/index/add-preview`, {
+      method: 'POST',
+      body: JSON.stringify({ file }),
+    });
+  } catch (err) {
+    return toast(err.message, { error: true });
+  }
+
+  const title = node('input', { type: 'text', class: ui.pathInput, spellcheck: 'false' });
+  title.value = preview.name;
+  const hook = node('textarea', { class: ui.textArea, spellcheck: 'false' });
+  hook.value = preview.description;
+
+  const picker = node('select', { class: ui.select });
+  for (const section of preview.sections) picker.append(node('option', { value: section, text: section }));
+  picker.append(node('option', { value: '', text: 'End of MEMORY.md' }));
+  if (preview.sections.length) picker.value = preview.sections[preview.sections.length - 1];
+
+  const line = node('div', { class: ui.willItem('keep') });
+  const update = () => {
+    const label = title.value.trim().replace(/[[\]]/g, '') || preview.name;
+    const text = hook.value.trim();
+    line.textContent = text ? `- [${label}](${file}) — ${text}` : `- [${label}](${file})`;
+  };
+  title.addEventListener('input', update);
+  hook.addEventListener('input', update);
+  update();
+
+  const body = node('div', { class: ui.modalBody }, [
+    node('p', { class: ui.noteTight, text: preview.hasIndex
+      ? 'MEMORY.md is loaded at the start of every session, so a memory with no bullet here is one Claude never sees. This adds one line and nothing else.'
+      : 'This project has no MEMORY.md yet. Adding this entry creates one.' }),
+    node('label', { class: ui.willTitle, text: 'Title' }),
+    title,
+    node('label', { class: ui.willTitle, text: 'Hook' }),
+    hook,
+    node('label', { class: ui.willTitle, text: 'Section' }),
+    picker,
+    node('div', { class: ui.willBlock }, [
+      node('div', { class: ui.willTitle, text: 'Will be added' }),
+      line,
+    ]),
+  ]);
+
+  const modal = node('div', { class: ui.modal }, [
+    node('header', { class: ui.modalHead }, [node('h3', { class: ui.modalTitle, text: `Add ${file} to MEMORY.md` })]),
+    body,
+    node('footer', { class: ui.modalFoot }, [
+      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
+      node('button', {
+        class: ui.button({ tone: 'primary' }),
+        text: 'Add entry',
+        onclick: async () => {
+          closeModal();
+          await runIndexEdit(
+            'index/add',
+            { file, section: picker.value || null, title: title.value, hook: hook.value },
+            () => 'Added to MEMORY.md',
+          );
+        },
+      }),
+    ]),
+  ]);
+
+  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
+  el('modal-root').append(backdrop);
+  title.focus();
+  title.select();
+}
+
+async function openMergeDialog(into, from) {
+  let preview;
+  try {
+    preview = await api(`/api/stores/${encodeURIComponent(state.storeId)}/merge-preview`, {
+      method: 'POST',
+      body: JSON.stringify({ into, from }),
+    });
+  } catch (err) {
+    return toast(err.message, { error: true });
+  }
+
+  const heading = node('input', { type: 'text', class: ui.pathInput, spellcheck: 'false' });
+  heading.value = preview.heading;
+
+  const body = node('div', { class: ui.modalBody });
+  body.append(node('p', { class: ui.noteTight, text: `Everything in "${preview.fromName}" moves into "${preview.intoName}" under a new heading, and "${preview.fromName}" goes to the trash. This rewrites prose, which nothing else in this app does - the whole operation is one undo.` }));
+
+  const changes = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Will change' })]);
+  changes.append(node('div', { class: ui.willItem('keep'), text: `${preview.into}  +  ${preview.bodyLines} line(s) from ${preview.from}` }));
+  for (const entry of preview.inbound) {
+    changes.append(node('div', { class: ui.willItem('keep'), text: `${entry.file}  ${entry.targets.map((t) => `[[${t}]]`).join(' ')}  →  [[${preview.intoName}]]` }));
+  }
+  for (const link of preview.selfLinks) {
+    changes.append(node('div', { class: ui.willItem('keep'), text: `${preview.into}  [[${link}]]  →  plain text, to avoid a self-link` }));
+  }
+  body.append(changes);
+
+  const removals = node('div', { class: ui.willBlock }, [node('div', { class: ui.willTitle, text: 'Will be removed' })]);
+  removals.append(node('div', { class: ui.willItem('remove'), text: `memory/${preview.from}  →  memory/.trash/` }));
+  for (const line of preview.indexLines) {
+    removals.append(node('div', { class: ui.willItem('remove'), text: `MEMORY.md line ${line.index + 1}:  ${line.text}` }));
+  }
+  if (!preview.indexLines.length) {
+    removals.append(node('div', { class: ui.willItem(), text: 'MEMORY.md has no index bullet for the source - nothing to remove there.' }));
+  }
+  body.append(removals);
+
+  if (preview.inlineRefs.length) {
+    const kept = node('div', { class: ui.willBlock }, [
+      node('div', { class: ui.willTitle, text: 'Left untouched - mentioned inside prose, so you may want to fix these by hand' }),
+    ]);
+    for (const ref of preview.inlineRefs) {
+      kept.append(node('div', { class: ui.willItem('keep'), text: `MEMORY.md line ${ref.index + 1}:  ${ref.text}` }));
+    }
+    body.append(kept);
+  }
+
+  body.append(node('label', { class: ui.willTitle, text: 'Heading for the merged section' }), heading);
+
+  const modal = node('div', { class: ui.modal }, [
+    node('header', { class: ui.modalHead }, [
+      node('h3', { class: ui.modalTitle, text: `Merge "${preview.fromName}" into "${preview.intoName}"?` }),
+    ]),
+    body,
+    node('footer', { class: ui.modalFoot }, [
+      node('button', { class: ui.button(), text: 'Cancel', onclick: closeModal }),
+      node('button', {
+        class: ui.button({ tone: 'primary' }),
+        text: 'Merge',
+        onclick: async () => {
+          closeModal();
+          try {
+            const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/merge`, {
+              method: 'POST',
+              body: JSON.stringify({ into, from, heading: heading.value }),
+            });
+            if (state.selected === from) state.selected = into;
+            await openStore(state.storeId, { keepTab: true });
+            toast(`Merged into ${preview.intoName}`, {
+              action: { label: 'Undo', run: () => restoreFromTrash(result.record.id) },
+            });
+          } catch (err) {
+            toast(err.message, { error: true });
+          }
+        },
+      }),
+    ]),
+  ]);
+
+  const backdrop = node('div', { class: ui.modalBackdrop, onclick: (event) => { if (event.target === backdrop) closeModal(); } }, [modal]);
+  el('modal-root').append(backdrop);
+  heading.focus();
+  heading.select();
+}
+
 async function restoreFromTrash(id) {
   try {
     const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/restore`, {
@@ -620,6 +1025,12 @@ async function restoreFromTrash(id) {
   }
 }
 
+const INDEX_EDIT_LABELS = {
+  hook: 'MEMORY.md hook shortened',
+  move: 'MEMORY.md entry moved',
+  add: 'MEMORY.md entry added',
+};
+
 function renderTrash(container) {
   const trash = state.store.trash;
   if (!trash.length) {
@@ -630,7 +1041,11 @@ function renderTrash(container) {
     const when = String(record.deletedAt).replace('T', ' ').replace(/\..*$/, '');
     const detail = record.kind === 'wikilink'
       ? `unlinked in ${record.sourceFile} · ${when}`
-      : `${record.files.length} file(s)${record.indexTrashedFile ? ' + MEMORY.md' : ''} · ${when} · ${record.removedLines?.length || 0} index line(s) removed`;
+      : record.kind === 'index-edit'
+        ? `${INDEX_EDIT_LABELS[record.op] || 'MEMORY.md edited'} · ${when}`
+        : record.kind === 'merge'
+          ? `merged into ${record.into} · ${when} · ${record.backups?.length || 0} file(s) rewritten`
+          : `${record.files.length} file(s)${record.indexTrashedFile ? ' + MEMORY.md' : ''} · ${when} · ${record.removedLines?.length || 0} index line(s) removed`;
     container.append(node('div', { class: ui.issue(!record.present) }, [
       node('div', { class: ui.issueBody }, [
         node('div', { class: ui.issueTitle, text: record.label || record.id }),
@@ -950,6 +1365,7 @@ function renderBudget(container) {
           node('div', { class: ui.issueDetail, text: `MEMORY.md line ${entry.index + 1} · ${entry.file}` }),
         ]),
         node('button', { class: ui.buttonSmall, text: 'Open', onclick: () => selectMemory(entry.file) }),
+        node('button', { class: ui.buttonPrimarySmall, text: 'Move up', onclick: () => openMoveDialog(entry) }),
       ]));
     }
     if (dropped.length > 20) {
@@ -1048,13 +1464,18 @@ function renderPrune(container) {
     container.append(node('div', { class: ui.sectionLabel, text: `Long index hooks · ${longHooks.length}` }));
     container.append(node('p', { class: ui.noteTight, text: 'The hook is the text after the dash in MEMORY.md. It is loaded every session, so a 400-character hook costs more than the memory it points at. Shortening these is the cheapest win.' }));
     for (const hook of longHooks.slice(0, 12)) {
-      container.append(node('div', { class: ui.issue(false) }, [
+      const row = node('div', { class: ui.issue(false) });
+      const editButton = node('button', { class: ui.buttonPrimarySmall, text: 'Edit hook' });
+      row.append(
         node('div', { class: ui.issueBody }, [
           node('div', { class: ui.issueTitle, text: `${hook.hookLength} chars: ${hook.title}` }),
           node('div', { class: ui.issueDetail, text: `MEMORY.md line ${hook.index + 1} · ${hook.file}` }),
         ]),
         node('button', { class: ui.buttonSmall, text: 'Open', onclick: () => selectMemory(hook.file) }),
-      ]));
+        editButton,
+      );
+      editButton.onclick = () => openHookEditor(row, hook.index);
+      container.append(row);
     }
   }
 
@@ -1075,6 +1496,18 @@ function renderPrune(container) {
             node('div', { class: ui.dupeSideName, text: side.name }),
             node('div', { class: ui.dupeSideDesc, text: side.description || side.file }),
           ])),
+        ]),
+        node('div', { class: ui.dupeActions }, [
+          node('button', {
+            class: ui.buttonSmall,
+            text: `Merge into ${pair.a.name}`,
+            onclick: () => openMergeDialog(pair.a.file, pair.b.file),
+          }),
+          node('button', {
+            class: ui.buttonSmall,
+            text: `Merge into ${pair.b.name}`,
+            onclick: () => openMergeDialog(pair.b.file, pair.a.file),
+          }),
         ]),
       ]));
     }
@@ -1250,6 +1683,7 @@ function renderTab() {
   else if (state.tab === 'context') renderContext(container);
   else if (state.tab === 'index') renderIndex(container);
   else if (state.tab === 'health') renderHealth(container);
+  else if (state.tab === 'settings') renderSettings(container);
   else if (state.tab === 'trash') renderTrash(container);
   else if (state.tab === 'graph') {
     const wrap = node('div', { id: 'graph-wrap', class: ui.graphWrap });

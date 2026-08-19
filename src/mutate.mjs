@@ -12,7 +12,21 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseIndex, removeIndexEntries, removeLine, insertLines, unwrapWikilink } from './parse.mjs';
+import {
+  parseIndex,
+  removeIndexEntries,
+  removeLine,
+  insertLines,
+  unwrapWikilink,
+  retargetWikilink,
+  setIndexHook,
+  moveIndexEntry as moveIndexEntryText,
+  sectionInsertIndex,
+  sectionStartIndex,
+  topInsertIndex,
+  insertIndexEntry,
+  dominantSeparator,
+} from './parse.mjs';
 import { listMemoryFiles } from './projects.mjs';
 import { TRASH_DIR, loadMemory } from './model.mjs';
 
@@ -340,6 +354,55 @@ export function restoreMemory(dir, id) {
 
   const record = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
 
+  if (record.kind === 'index-edit') {
+    const current = readIndex(dir);
+    const unchanged = current !== null && sha256(current) === record.indexSha256After;
+
+    if (record.indexCreated) {
+      if (!unchanged) throw new Error('MEMORY.md has changed since it was created - not deleting it');
+      fs.unlinkSync(indexPath(dir));
+      fs.unlinkSync(recordPath);
+      return { restored: true, file: 'MEMORY.md', indexRestored: 'exact', kind: 'index-edit' };
+    }
+
+    const backup = path.join(trashPath, record.indexBackupFile);
+    if (!fs.existsSync(backup)) throw new Error('The backup copy of MEMORY.md is gone');
+    writeIndexAtomic(dir, fs.readFileSync(backup, 'utf8'));
+    fs.unlinkSync(backup);
+    fs.unlinkSync(recordPath);
+    return {
+      restored: true,
+      file: 'MEMORY.md',
+      indexRestored: unchanged ? 'exact' : 'overwritten',
+      kind: 'index-edit',
+    };
+  }
+
+  if (record.kind === 'merge') {
+    const entry = record.files[0];
+    safeMemoryPath(dir, entry.file);
+    if (fs.existsSync(path.join(dir, entry.file))) {
+      throw new Error(`${entry.file} already exists - not overwriting it`);
+    }
+    for (const backup of record.backups) {
+      if (!fs.existsSync(path.join(trashPath, backup.backupFile))) {
+        throw new Error(`The backup copy of ${backup.file} is gone`);
+      }
+    }
+    if (!fs.existsSync(path.join(trashPath, entry.trashedFile))) {
+      throw new Error(`The trashed copy of ${entry.file} is gone`);
+    }
+
+    for (const backup of record.backups) {
+      writeFileAtomic(dir, backup.file, fs.readFileSync(path.join(trashPath, backup.backupFile), 'utf8'));
+    }
+    fs.renameSync(path.join(trashPath, entry.trashedFile), path.join(dir, entry.file));
+    for (const backup of record.backups) fs.unlinkSync(path.join(trashPath, backup.backupFile));
+    fs.unlinkSync(recordPath);
+
+    return { restored: true, files: [entry.file, record.into], indexRestored: 'exact', kind: 'merge' };
+  }
+
   if (record.kind === 'wikilink') {
     safeMemoryPath(dir, record.sourceFile);
     const backup = path.join(trashPath, record.backupFile);
@@ -405,4 +468,295 @@ export function deleteIndexLine(dir, lineIndex, expectedText) {
   const { text, removed } = removeLine(current, lineIndex, expectedText);
   writeIndexAtomic(dir, text);
   return { removed };
+}
+
+function trashDir(dir) {
+  const trashPath = path.join(dir, TRASH_DIR);
+  fs.mkdirSync(trashPath, { recursive: true });
+  return trashPath;
+}
+
+function backupInto(trashPath, name, text) {
+  fs.writeFileSync(path.join(trashPath, name), text);
+  return name;
+}
+
+function editIndex(dir, { op, label, apply }) {
+  const before = readIndex(dir);
+  const created = before === null;
+  const { text, ...detail } = apply(before);
+
+  const trashPath = trashDir(dir);
+  const stamp = timestamp();
+  const backupFile = created ? null : backupInto(trashPath, `${stamp}_MEMORY.md.before-${op}.md`, before);
+
+  try {
+    writeIndexAtomic(dir, text);
+  } catch (err) {
+    if (backupFile) {
+      try { fs.unlinkSync(path.join(trashPath, backupFile)); } catch { /* best effort */ }
+    }
+    throw err;
+  }
+
+  const record = {
+    version: 2,
+    kind: 'index-edit',
+    op,
+    id: `${stamp}_${op}`,
+    label,
+    deletedAt: new Date().toISOString(),
+    indexBackupFile: backupFile,
+    indexCreated: created,
+    indexSha256Before: created ? null : sha256(before),
+    indexSha256After: sha256(text),
+    files: [],
+    removedLines: [],
+  };
+  fs.writeFileSync(path.join(trashPath, `${record.id}.restore.json`), JSON.stringify(record, null, 2));
+  return { record, ...detail };
+}
+
+function requireIndex(text) {
+  if (text === null) throw new Error('This project has no MEMORY.md');
+  return text;
+}
+
+export function editIndexHook(dir, { lineIndex, expectedText, hook }) {
+  return editIndex(dir, {
+    op: 'hook',
+    label: `hook on MEMORY.md line ${Number(lineIndex) + 1}`,
+    apply: (current) => {
+      const result = setIndexHook(requireIndex(current), lineIndex, expectedText, hook);
+      return { text: result.text, before: result.before, after: result.after, edited: true };
+    },
+  });
+}
+
+function resolveMoveTarget(parsed, { toIndex, section, top }) {
+  if (toIndex !== undefined && toIndex !== null) return Number(toIndex);
+  if (top) return topInsertIndex(parsed);
+  if (section) return sectionStartIndex(parsed, section);
+  throw new Error('No target given for the move');
+}
+
+export function moveIndexEntry(dir, { lineIndex, expectedText, toIndex, section = null, top = false }) {
+  return editIndex(dir, {
+    op: 'move',
+    label: `moved MEMORY.md line ${Number(lineIndex) + 1}`,
+    apply: (current) => {
+      const text = requireIndex(current);
+      const target = resolveMoveTarget(parseIndex(text), { toIndex, section, top });
+      const result = moveIndexEntryText(text, lineIndex, expectedText, target);
+      return { text: result.text, moved: result.moved, toIndex: result.toIndex, movedEntry: true };
+    },
+  });
+}
+
+function composeEntry(current, memory, title, hook) {
+  const parsed = current === null ? null : parseIndex(current);
+  const separator = parsed ? dominantSeparator(parsed) : ' — ';
+  const label = String(title ?? '').trim() || memory.name;
+  const text = String(hook ?? '').trim();
+  if (/[\r\n]/.test(label) || /[\r\n]/.test(String(hook ?? ''))) {
+    throw new Error('An index entry has to stay on one line');
+  }
+  const bullet = `- [${label.replace(/[[\]]/g, '')}](${memory.file})`;
+  return text ? `${bullet}${separator}${text}` : bullet;
+}
+
+function requireIndexable(dir, file) {
+  const full = safeMemoryPath(dir, file);
+  if (!fs.existsSync(full)) throw new Error(`No such memory: ${file}`);
+  const memory = loadMemory(dir, file);
+  if (!memory) throw new Error(`Could not read ${file}`);
+  return memory;
+}
+
+export function addIndexEntryPreview(dir, { file, section = null, title = null, hook = null }) {
+  const memory = requireIndexable(dir, file);
+  const current = readIndex(dir);
+  const parsed = current === null ? null : parseIndex(current);
+  const existing = parsed ? parsed.entries.find((entry) => entry.file === file) : null;
+
+  return {
+    file,
+    name: memory.name,
+    description: memory.description,
+    sections: parsed
+      ? [...new Set(parsed.parsedLines.filter((line) => line.kind === 'heading').map((line) => line.section))]
+      : [],
+    hasIndex: current !== null,
+    alreadyIndexed: Boolean(existing),
+    existingLine: existing ? { index: existing.index, text: existing.text } : null,
+    line: composeEntry(current, memory, title ?? memory.name, hook ?? memory.description),
+    at: parsed ? sectionInsertIndex(parsed, section) : 2,
+  };
+}
+
+export function addIndexEntry(dir, { file, section = null, title = null, hook = null }) {
+  const memory = requireIndexable(dir, file);
+
+  return editIndex(dir, {
+    op: 'add',
+    label: `index entry for ${file}`,
+    apply: (current) => {
+      const line = composeEntry(current, memory, title ?? memory.name, hook ?? memory.description);
+      if (current === null) return { text: `# Memory\n\n${line}\n`, line, at: 2, added: true };
+
+      const parsed = parseIndex(current);
+      if (parsed.entries.some((entry) => entry.file === file)) {
+        throw new Error(`MEMORY.md already has an entry for ${file}`);
+      }
+      const result = insertIndexEntry(current, sectionInsertIndex(parsed, section), line);
+      return { text: result.text, line, at: result.index, added: true };
+    },
+  });
+}
+
+function resolveTargets(memories) {
+  const byName = new Map();
+  const byStem = new Map();
+  for (const memory of memories) {
+    if (!byName.has(memory.name)) byName.set(memory.name, memory.file);
+    if (!byStem.has(memory.stem)) byStem.set(memory.stem, memory.file);
+  }
+  return (target) => byName.get(target) || byStem.get(target) || null;
+}
+
+function loadAll(dir) {
+  return listMemoryFiles(dir).map((file) => loadMemory(dir, file)).filter(Boolean);
+}
+
+function mergePlan(dir, into, from) {
+  if (into === from) throw new Error('A memory cannot be merged into itself');
+  const target = requireIndexable(dir, into);
+  const source = requireIndexable(dir, from);
+
+  const memories = loadAll(dir);
+  const resolve = resolveTargets(memories);
+  const pointsAtSource = (link) => resolve(link) === source.file;
+
+  const inbound = [];
+  const selfLinks = [];
+  for (const memory of memories) {
+    if (memory.file === source.file) continue;
+    const targets = memory.outbound.filter(pointsAtSource);
+    if (!targets.length) continue;
+    if (memory.file === target.file) selfLinks.push(...targets);
+    else inbound.push({ file: memory.file, name: memory.name, targets });
+  }
+
+  const indexText = readIndex(dir);
+  const parsed = indexText === null ? null : parseIndex(indexText);
+  const sourceEntries = parsed ? parsed.entries.filter((entry) => entry.file === from) : [];
+  const inlineRefs = parsed
+    ? parsed.inlineLinks.filter((link) => link.file === from).map((link) => ({ index: link.index, text: link.text }))
+    : [];
+
+  return { target, source, inbound, selfLinks, indexText, sourceEntries, inlineRefs };
+}
+
+export function mergePreview(dir, { into, from }) {
+  const plan = mergePlan(dir, into, from);
+  return {
+    into,
+    from,
+    intoName: plan.target.name,
+    fromName: plan.source.name,
+    heading: plan.source.name,
+    bodyLines: plan.source.body.trim() ? plan.source.body.trim().split('\n').length : 0,
+    inbound: plan.inbound,
+    selfLinks: plan.selfLinks,
+    indexLines: plan.sourceEntries.map((entry) => ({ index: entry.index, text: entry.text })),
+    inlineRefs: plan.inlineRefs,
+    hasIndex: plan.indexText !== null,
+  };
+}
+
+export function mergeMemories(dir, { into, from, heading = null }) {
+  const plan = mergePlan(dir, into, from);
+  const { target, source } = plan;
+
+  const title = String(heading ?? '').trim() || source.name;
+  if (/[\r\n]/.test(title)) throw new Error('A heading has to stay on one line');
+
+  const body = source.body.trim();
+  const joined = `${target.raw.replace(/\s*$/, '')}\n\n## ${title}\n\n${body}\n`;
+  const merged = plan.selfLinks.reduce((text, link) => unwrapWikilink(text, link).text, joined);
+
+  const rewrites = [{ file: target.file, text: merged }];
+  for (const entry of plan.inbound) {
+    const memory = loadMemory(dir, entry.file);
+    if (!memory) continue;
+    const text = entry.targets.reduce((current, link) => retargetWikilink(current, link, target.name).text, memory.raw);
+    if (text !== memory.raw) rewrites.push({ file: entry.file, text });
+  }
+
+  const indexBefore = plan.indexText;
+  const indexAfter = indexBefore === null ? null : removeIndexEntries(indexBefore, [from]);
+
+  const trashPath = trashDir(dir);
+  const stamp = timestamp();
+  const backups = [];
+
+  for (const rewrite of rewrites) {
+    const memory = loadMemory(dir, rewrite.file);
+    backups.push({
+      file: rewrite.file,
+      backupFile: backupInto(trashPath, `${stamp}_${rewrite.file}.before-merge.md`, memory.raw),
+    });
+  }
+  if (indexBefore !== null) {
+    backups.push({
+      file: 'MEMORY.md',
+      backupFile: backupInto(trashPath, `${stamp}_MEMORY.md.before-merge.md`, indexBefore),
+    });
+  }
+
+  const trashedFile = `${stamp}_${from}`;
+  const done = [];
+  try {
+    for (const rewrite of rewrites) {
+      writeFileAtomic(dir, rewrite.file, rewrite.text);
+      done.push(rewrite.file);
+    }
+    if (indexAfter && indexAfter.text !== indexBefore) writeIndexAtomic(dir, indexAfter.text);
+    fs.renameSync(path.join(dir, source.file), path.join(trashPath, trashedFile));
+  } catch (err) {
+    for (const backup of backups) {
+      try {
+        writeFileAtomic(dir, backup.file, fs.readFileSync(path.join(trashPath, backup.backupFile), 'utf8'));
+      } catch { /* best effort */ }
+    }
+    for (const backup of backups) {
+      try { fs.unlinkSync(path.join(trashPath, backup.backupFile)); } catch { /* best effort */ }
+    }
+    throw err;
+  }
+
+  const record = {
+    version: 2,
+    kind: 'merge',
+    id: `${stamp}_merge_${from}`,
+    label: `${source.name} into ${target.name}`,
+    deletedAt: new Date().toISOString(),
+    into: target.file,
+    from: source.file,
+    heading: title,
+    backups,
+    files: [{ file: source.file, trashedFile, name: source.name, description: source.description }],
+    removedLines: indexAfter ? indexAfter.removed : [],
+    indexSha256Before: indexBefore === null ? null : sha256(indexBefore),
+    indexSha256After: indexAfter === null ? null : sha256(indexAfter.text),
+  };
+  fs.writeFileSync(path.join(trashPath, `${record.id}.restore.json`), JSON.stringify(record, null, 2));
+
+  return {
+    merged: true,
+    record,
+    rewritten: rewrites.map((rewrite) => rewrite.file),
+    retargeted: plan.inbound.length,
+    unwrapped: plan.selfLinks.length,
+  };
 }

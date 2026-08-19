@@ -73,6 +73,7 @@ const badgeBase = 'flex-none rounded-sm px-1.5 py-px font-mono text-2xs lowercas
 const badgeTone = {
   neutral: 'bg-surface-sunken text-fg-muted',
   warn: 'bg-warn-surface text-warn',
+  ok: 'bg-ok-surface text-ok',
   project: 'bg-type-project-surface text-type-project',
   feedback: 'bg-type-feedback-surface text-type-feedback',
   user: 'bg-type-user-surface text-type-user',
@@ -221,6 +222,7 @@ export const dupeScore = 'font-semibold text-warn';
 export const dupePair = 'grid grid-cols-1 gap-2.5 md:grid-cols-2';
 export const dupeSide = 'cursor-pointer rounded-md border border-line bg-surface-sunken px-3 py-2.5 transition-colors hover:border-accent';
 export const dupeSideName = 'text-sm font-medium text-fg';
+export const dupeActions = 'mt-2 flex flex-wrap justify-end gap-2';
 export const dupeSideDesc = 'text-xs text-fg-muted';
 
 export const contextRow = 'flex items-baseline justify-between gap-3.5 border-b border-line px-1 py-1.5 last:border-b-0';
@@ -261,6 +263,20 @@ export const cascadeName = 'block text-sm font-medium text-fg';
 export const cascadeDetail = 'block font-mono text-2xs break-words text-fg-muted';
 
 export const pathInput = cx('my-1 mb-3 w-full rounded-md border border-line bg-surface-sunken font-mono text-xs text-fg focus:border-accent focus:outline-none', controlPad.lg);
+export const textArea = cx('my-1 mb-1.5 block min-h-20 w-full resize-y rounded-md border border-line bg-surface-sunken font-mono text-xs leading-relaxed text-fg focus:border-accent focus:outline-none', controlPad.lg);
+export const hookEditor = 'mb-1.5 rounded-md border border-accent-line bg-surface-sunken px-3 py-2.5';
+export const hookEditorFoot = 'flex justify-end gap-2';
+export const charCount = 'mb-3 flex items-baseline justify-between gap-3 font-mono text-2xs text-fg-subtle';
+export const charCountOver = 'mb-3 flex items-baseline justify-between gap-3 font-mono text-2xs text-warn';
+
+export const settingsKeyHead = 'mb-1.5 flex flex-wrap items-baseline gap-2.5';
+export const settingsKeyName = 'font-mono text-sm font-semibold text-fg';
+export const settingsEffective = 'rounded-sm bg-accent-surface px-1.5 py-px font-mono text-2xs break-all text-accent';
+export const settingsLayerRow = 'flex flex-wrap items-baseline gap-2.5 border-b border-line py-1.5 last:border-b-0';
+export const settingsLayerFile = 'min-w-0 flex-1 font-mono text-2xs break-all text-fg-subtle';
+const settingsLayerValueBase = 'font-mono text-2xs break-all';
+const settingsLayerValueState = { wins: 'text-fg', shadowed: 'text-fg-subtle line-through decoration-line-strong' };
+export const settingsLayerValue = (wins) => cx(settingsLayerValueBase, wins ? settingsLayerValueState.wins : settingsLayerValueState.shadowed);
 
 export const toastRoot = 'fixed bottom-5 left-1/2 z-200 flex -translate-x-1/2 flex-col items-center gap-2';
 const toastBase = 'flex items-center gap-3 rounded-full px-4 py-2 text-sm shadow-pop';

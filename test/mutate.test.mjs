@@ -5,17 +5,24 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  addIndexEntry,
+  addIndexEntryPreview,
   deleteMemories,
   deleteMemory,
   deletePreview,
   deleteIndexLine,
   deleteProject,
+  editIndexHook,
+  mergeMemories,
+  mergePreview,
+  moveIndexEntry,
   projectDeletePreview,
   removeWikilink,
   restoreMemory,
   safeMemoryPath,
 } from '../src/mutate.mjs';
-import { buildProject } from '../src/model.mjs';
+import { buildProject, listTrash } from '../src/model.mjs';
+import { parseIndex } from '../src/parse.mjs';
 import { makeFixture, cleanup, snapshot, FIXTURE_SLUG } from './helpers.mjs';
 
 // Runs on the committed fixture, so these cover the same ground on CI as they do
@@ -265,5 +272,305 @@ test('a project delete never touches anything outside memory/', () => {
     assert.deepEqual(fs.readdirSync(projectDir).sort(), siblingsBefore, 'sibling files changed');
     assert.equal(fs.readFileSync(path.join(projectDir, 'sentinel.jsonl'), 'utf8'), '{"cwd":"/somewhere"}\n');
     assert.ok(fs.existsSync(dir), 'the memory dir itself should remain');
+  });
+});
+
+const HYPHEN_SLUG = '-Users-demo-repos-hyphen';
+
+function readIndexFile(dir) {
+  return fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8');
+}
+
+test('editing a hook then restoring leaves the memory dir byte-identical', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const entry = parseIndex(readIndexFile(dir)).entries[0];
+
+    const { record, after } = editIndexHook(dir, {
+      lineIndex: entry.index,
+      expectedText: entry.text,
+      hook: 'much shorter now',
+    });
+    assert.match(after, /much shorter now$/);
+    assert.notEqual(readIndexFile(dir), before['MEMORY.md']);
+
+    const result = restoreMemory(dir, record.id);
+    assert.equal(result.indexRestored, 'exact');
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('editing a hook touches only that one line', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = readIndexFile(dir).split('\n');
+    const entry = parseIndex(readIndexFile(dir)).entries[0];
+
+    editIndexHook(dir, { lineIndex: entry.index, expectedText: entry.text, hook: 'x' });
+    const after = readIndexFile(dir).split('\n');
+
+    assert.equal(after.length, before.length);
+    for (let i = 0; i < before.length; i++) {
+      if (i === entry.index) continue;
+      assert.equal(after[i], before[i], `line ${i + 1} changed`);
+    }
+  });
+});
+
+test('a hook edit keeps the separator a hyphen-only project uses', () => {
+  withFixture((root) => {
+    const dir = path.join(root, HYPHEN_SLUG, 'memory');
+    const entry = parseIndex(readIndexFile(dir)).entries[0];
+    const { after } = editIndexHook(dir, { lineIndex: entry.index, expectedText: entry.text, hook: 'kept' });
+    assert.equal(after, '- [No em-dashes](no-em-dashes.md) - kept');
+    assert.ok(!after.includes('—'));
+  });
+});
+
+test('a hook edit refuses a line that moved underneath it', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const entry = parseIndex(readIndexFile(dir)).entries[0];
+    assert.throws(
+      () => editIndexHook(dir, { lineIndex: entry.index, expectedText: 'not what is there', hook: 'x' }),
+      /changed since this was loaded/,
+    );
+    assert.equal(parseIndex(readIndexFile(dir)).entries[0].text, entry.text);
+  });
+});
+
+test('moving an entry then restoring leaves the memory dir byte-identical', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const entries = parseIndex(readIndexFile(dir)).entries;
+    const last = entries[entries.length - 1];
+
+    const { record, toIndex } = moveIndexEntry(dir, {
+      lineIndex: last.index,
+      expectedText: last.text,
+      toIndex: 0,
+    });
+    assert.equal(toIndex, 0);
+    assert.equal(readIndexFile(dir).split('\n')[0], last.text);
+
+    assert.equal(restoreMemory(dir, record.id).indexRestored, 'exact');
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('moving an entry keeps every line, just in a new order', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = readIndexFile(dir).split('\n');
+    const entries = parseIndex(readIndexFile(dir)).entries;
+    const last = entries[entries.length - 1];
+
+    moveIndexEntry(dir, { lineIndex: last.index, expectedText: last.text, toIndex: 0 });
+    const after = readIndexFile(dir).split('\n');
+
+    assert.deepEqual([...after].sort(), [...before].sort());
+  });
+});
+
+test('adding an orphan to the index then restoring leaves it byte-identical', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const orphan = buildProject(root, SLUG).memories.find((memory) => memory.status === 'orphan');
+    assert.ok(orphan, 'the fixture should carry an orphan');
+
+    const { record, line } = addIndexEntry(dir, { file: orphan.file, section: 'Conventions' });
+    assert.ok(line.includes(`(${orphan.file})`));
+
+    const rebuilt = buildProject(root, SLUG);
+    assert.equal(rebuilt.memories.find((m) => m.file === orphan.file).status, 'indexed');
+    assert.equal(rebuilt.memories.find((m) => m.file === orphan.file).section, 'Conventions');
+
+    assert.equal(restoreMemory(dir, record.id).indexRestored, 'exact');
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('adding an entry that already exists is refused', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const indexed = buildProject(root, SLUG).memories.find((memory) => memory.status === 'indexed');
+
+    assert.throws(() => addIndexEntry(dir, { file: indexed.file }), /already has an entry/);
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('adding an entry for a file that is not there is refused', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    assert.throws(() => addIndexEntry(dir, { file: 'nothing-here.md' }), /No such memory/);
+    assert.throws(() => addIndexEntry(dir, { file: '../escape.md' }), /plain \.md filename/);
+  });
+});
+
+test('adding an entry to a project with no MEMORY.md creates one, and undo removes it', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    fs.unlinkSync(path.join(dir, 'MEMORY.md'));
+    const before = snapshot(dir);
+    const orphan = buildProject(root, SLUG).memories[0];
+
+    const { record } = addIndexEntry(dir, { file: orphan.file });
+    assert.ok(fs.existsSync(path.join(dir, 'MEMORY.md')));
+    assert.ok(readIndexFile(dir).includes(orphan.file));
+
+    restoreMemory(dir, record.id);
+    assert.ok(!fs.existsSync(path.join(dir, 'MEMORY.md')));
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('a created MEMORY.md is not deleted once it has been changed', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    fs.unlinkSync(path.join(dir, 'MEMORY.md'));
+    const orphan = buildProject(root, SLUG).memories[0];
+
+    const { record } = addIndexEntry(dir, { file: orphan.file });
+    fs.appendFileSync(path.join(dir, 'MEMORY.md'), '- something a human added\n');
+
+    assert.throws(() => restoreMemory(dir, record.id), /not deleting it/);
+    assert.ok(fs.existsSync(path.join(dir, 'MEMORY.md')));
+  });
+});
+
+test('a preview reports what adding an entry would write', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const orphan = buildProject(root, SLUG).memories.find((memory) => memory.status === 'orphan');
+
+    const preview = addIndexEntryPreview(dir, { file: orphan.file, section: 'Conventions' });
+    assert.equal(preview.alreadyIndexed, false);
+    assert.ok(preview.sections.includes('Conventions'));
+    assert.ok(preview.line.startsWith('- ['));
+    assert.ok(preview.line.includes(' — '));
+
+    assert.deepEqual(snapshot(dir), before, 'a preview must not write anything');
+  });
+});
+
+test('every index edit leaves a restorable trash record', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const entry = parseIndex(readIndexFile(dir)).entries[0];
+    const { record } = editIndexHook(dir, { lineIndex: entry.index, expectedText: entry.text, hook: 'x' });
+
+    const listed = listTrash(dir).find((item) => item.id === record.id);
+    assert.ok(listed, 'the edit should appear in the trash listing');
+    assert.equal(listed.present, true, 'the Trash tab must offer a Restore button for it');
+  });
+});
+
+test('merging then restoring leaves the memory dir byte-identical', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const memories = buildProject(root, SLUG).memories;
+    const into = memories.find((m) => m.status === 'indexed');
+    const from = memories.find((m) => m.file !== into.file && m.status === 'indexed');
+
+    const { record } = mergeMemories(dir, { into: into.file, from: from.file });
+    const after = snapshot(dir);
+    assert.ok(!(from.file in after), 'the source should be gone from the memory dir');
+    assert.ok(after[into.file].includes(`## ${from.name}`));
+    assert.ok(!after['MEMORY.md'].includes(`(${from.file})`));
+
+    assert.equal(restoreMemory(dir, record.id).kind, 'merge');
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('a merge repoints the wikilinks that pointed at the source', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    fs.writeFileSync(path.join(dir, 'target.md'), '---\nname: target\n---\n\nThe surviving memory.\n');
+    fs.writeFileSync(path.join(dir, 'source.md'), '---\nname: source\n---\n\nWorth keeping.\n');
+    fs.writeFileSync(
+      path.join(dir, 'pointer.md'),
+      '---\nname: pointer\n---\n\nSee [[source]] and [[source|the source]] and [[target]].\n',
+    );
+
+    const { retargeted } = mergeMemories(dir, { into: 'target.md', from: 'source.md' });
+    assert.equal(retargeted, 1);
+
+    const pointer = fs.readFileSync(path.join(dir, 'pointer.md'), 'utf8');
+    assert.ok(pointer.includes('[[target]] and [[target|the source]]'));
+    assert.ok(!pointer.includes('[[source'));
+
+    const dangling = buildProject(root, SLUG).health.danglingWikilinks;
+    assert.deepEqual(dangling.filter((link) => link.target === 'source'), []);
+  });
+});
+
+test('a merge unwraps a link the survivor had to the source rather than self-linking', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    fs.writeFileSync(path.join(dir, 'target.md'), '---\nname: target\n---\n\nBuilds on [[source]] directly.\n');
+    fs.writeFileSync(path.join(dir, 'source.md'), '---\nname: source\n---\n\nWorth keeping.\n');
+
+    const { unwrapped } = mergeMemories(dir, { into: 'target.md', from: 'source.md' });
+    assert.equal(unwrapped, 1);
+
+    const merged = fs.readFileSync(path.join(dir, 'target.md'), 'utf8');
+    assert.ok(merged.includes('Builds on source directly.'));
+    assert.ok(!merged.includes('[[target]]'), 'the merge must not leave a self-link');
+  });
+});
+
+test('a merge leaves prose mentions in MEMORY.md alone and reports them', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const project = buildProject(root, SLUG);
+    const inline = project.memories.find((m) => m.status === 'referenced');
+    assert.ok(inline, 'the fixture should carry a file linked only mid-sentence');
+    const into = project.memories.find((m) => m.status === 'indexed');
+
+    const preview = mergePreview(dir, { into: into.file, from: inline.file });
+    assert.ok(preview.inlineRefs.length, 'the preview should name the prose mention');
+
+    const beforeIndex = readIndexFile(dir);
+    mergeMemories(dir, { into: into.file, from: inline.file });
+    assert.equal(readIndexFile(dir), beforeIndex, 'a prose mention must not be rewritten');
+  });
+});
+
+test('a merge preview writes nothing', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const before = snapshot(dir);
+    const memories = buildProject(root, SLUG).memories;
+    mergePreview(dir, { into: memories[0].file, from: memories[1].file });
+    assert.deepEqual(snapshot(dir), before);
+  });
+});
+
+test('a memory cannot be merged into itself or into a file that is not there', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const file = buildProject(root, SLUG).memories[0].file;
+    assert.throws(() => mergeMemories(dir, { into: file, from: file }), /into itself/);
+    assert.throws(() => mergeMemories(dir, { into: file, from: 'gone.md' }), /No such memory/);
+    assert.throws(() => mergeMemories(dir, { into: file, from: '../escape.md' }), /plain \.md filename/);
+  });
+});
+
+test('a merge leaves a restorable trash record', () => {
+  withFixture((root) => {
+    const dir = path.join(root, SLUG, 'memory');
+    const memories = buildProject(root, SLUG).memories;
+    const { record } = mergeMemories(dir, { into: memories[0].file, from: memories[1].file });
+    const listed = listTrash(dir).find((item) => item.id === record.id);
+    assert.ok(listed);
+    assert.equal(listed.present, true);
   });
 });

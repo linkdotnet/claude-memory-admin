@@ -256,6 +256,8 @@ export function listTrash(dir) {
           ...entries.map((e) => e.trashedFile),
           parsed.indexTrashedFile,
           parsed.backupFile,
+          parsed.indexBackupFile,
+          ...(parsed.backups || []).map((b) => b.backupFile),
         ].filter(Boolean);
         return {
           ...parsed,
@@ -263,7 +265,8 @@ export function listTrash(dir) {
           files: entries,
           label: parsed.label || parsed.name || parsed.memoryFile || parsed.id,
           recordFile: name,
-          present: backups.length > 0 && backups.every((f) => fs.existsSync(path.join(trashPath, f))),
+          present: (backups.length > 0 || parsed.indexCreated === true)
+            && backups.every((f) => fs.existsSync(path.join(trashPath, f))),
         };
       } catch {
         return null;
