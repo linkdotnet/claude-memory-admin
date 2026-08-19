@@ -410,55 +410,6 @@ scopes, and an `instructions/` tree covering the import and glob edge cases. You
 `~/.claude/projects` is additionally checked when it exists, always on a
 throwaway copy.
 
-### Releasing
-
-Publishing runs in CI. You do not bump anything by hand.
-
-Go to **Actions, Release, Run workflow**, pick `patch`, `minor` or `major`, and
-run it. The workflow tests, bumps `package.json` and `package-lock.json`, commits
-and tags the bump, pushes both, then publishes to npm.
-
-If you would rather cut the version locally, that still works:
-
-```bash
-npm version patch
-git push --follow-tags
-```
-
-Pushing a `v*` tag publishes whatever is in `package.json`, after checking the
-two agree. Either route refuses to publish a version that is already on npm,
-because npm never allows one to be replaced.
-
-It needs one repository secret:
-
-| Secret | Value |
-| --- | --- |
-| `NPM_TOKEN` | an npm **Automation** access token with publish rights |
-
-Add it under *Settings, Secrets and variables, Actions, New repository secret*.
-An Automation token is the right kind because it bypasses 2FA, which an
-unattended workflow cannot satisfy.
-
-Releases are published with [npm provenance](https://docs.npmjs.com/generating-provenance-statements),
-so every version carries a signed, verifiable record of the workflow run and
-commit that built it. That needs the `id-token: write` permission the workflow
-already requests, a public repository, and the `repository` field in
-`package.json` pointing at this repo.
-
-Two things that will bite if they apply to you: the workflow pushes the bump
-commit to the default branch, so a branch protection rule that blocks pushes
-will stop it; and the tag it pushes uses `GITHUB_TOKEN`, which by design does
-not trigger other workflows, so there is no double publish.
-
-### Screenshots and demo data
-
-The screenshots come from an invented store, never a real one:
-
-```bash
-node scripts/demo-store.mjs /tmp/demo-store
-npm start -- --root /tmp/demo-store
-```
-
 ## License
 
 MIT
