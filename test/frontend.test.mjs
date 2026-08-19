@@ -69,7 +69,7 @@ test('the dialog paints its own backdrop', async () => {
 test('the compiled stylesheet carries the semantic token layer', () => {
   const css = read('public/styles.css');
   assert.ok(css.length > 1000, 'public/styles.css looks empty - run npm run build:css');
-  for (const token of ['--ui-canvas', '--ui-surface', '--ui-line', '--ui-fg', '--ui-accent', '--ui-danger']) {
+  for (const token of ['--ui-canvas', '--ui-surface', '--ui-line', '--ui-fg', '--ui-accent', '--ui-danger', '--ui-heat-4']) {
     assert.ok(css.includes(token), `compiled stylesheet is missing ${token}`);
   }
 });

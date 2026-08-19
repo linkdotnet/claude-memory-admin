@@ -139,6 +139,12 @@
   --ui-ok-surface: var(--color-green-50);
   --ui-ok-line: var(--color-green-300);
 
+  --ui-heat-0: var(--color-slate-200);
+  --ui-heat-1: var(--color-blue-200);
+  --ui-heat-2: var(--color-blue-400);
+  --ui-heat-3: var(--color-blue-600);
+  --ui-heat-4: var(--color-blue-800);
+
   --ui-type-project: var(--color-blue-700);
   --ui-type-project-surface: var(--color-blue-50);
   --ui-type-feedback: var(--color-amber-700);
@@ -190,6 +196,12 @@
   --color-ok: var(--ui-ok);
   --color-ok-surface: var(--ui-ok-surface);
   --color-ok-line: var(--ui-ok-line);
+
+  --color-heat-0: var(--ui-heat-0);
+  --color-heat-1: var(--ui-heat-1);
+  --color-heat-2: var(--ui-heat-2);
+  --color-heat-3: var(--ui-heat-3);
+  --color-heat-4: var(--ui-heat-4);
 
   --color-type-project: var(--ui-type-project);
   --color-type-project-surface: var(--ui-type-project-surface);
@@ -243,6 +255,12 @@
   --ui-ok: var(--color-green-400);
   --ui-ok-surface: var(--color-green-950);
   --ui-ok-line: var(--color-green-600);
+
+  --ui-heat-0: var(--color-slate-800);
+  --ui-heat-1: var(--color-blue-900);
+  --ui-heat-2: var(--color-blue-700);
+  --ui-heat-3: var(--color-blue-500);
+  --ui-heat-4: var(--color-blue-300);
 
   --ui-type-project: var(--color-blue-300);
   --ui-type-project-surface: var(--color-blue-950);

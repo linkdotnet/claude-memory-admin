@@ -115,7 +115,11 @@ project is to the cliff, and makes it quick to get back under it.
   memory exists can no longer be traced from anything on disk.
 - **Sessions**: the transcripts beside a store, with the retention window drawn
   the way MEMORY.md's cutoff is - each session a tick, the sweep line where it
-  falls. Titles are the ones Claude Code generated, falling back to the session
+  falls. Under it, a tile per day shades how much work that day held, and
+  clicking one narrows the list to it; the grid spans the retention window
+  rather than a fixed year, because a year of empty tiles would read as *no
+  sessions* when it only means *already swept*. Titles are the ones Claude Code
+  generated, falling back to the session
   slug and then the opening prompt; a session that names itself nowhere in the
   part read is shown by id rather than given an invented name. Only the head of
   each file is ever read, so a 200MB store of transcripts costs a quarter of a

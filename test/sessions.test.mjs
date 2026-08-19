@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import {
   EXPIRY_WARNING_DAYS,
+  HEAT_WEEKS_MAX,
+  heatmap,
   listSessions,
   originSession,
   retention,
@@ -154,4 +156,78 @@ test('only a project store has transcripts beside it', () => {
   assert.equal(transcriptDir({ kind: 'auto', dir: '/root/-slug/memory' }), '/root/-slug');
   assert.equal(transcriptDir({ kind: 'agent-user', dir: '/home/.claude/agent-memory/x' }), null);
   assert.equal(transcriptDir({ kind: 'global', dir: '/home/.claude' }), null);
+});
+
+const NOON = Date.parse('2026-08-19T12:00:00.000Z');
+const daysAgo = (count) => ({ modified: new Date(NOON - count * DAY).toISOString() });
+const weekday = (date) => new Date(`${date}T00:00:00.000Z`).getUTCDay();
+
+test('the activity grid runs Monday to Sunday and covers the whole retention window', () => {
+  const heat = heatmap([daysAgo(0)], { days: 30, now: NOON });
+  assert.equal(weekday(heat.start), 1, 'the first column starts on a Monday');
+  assert.equal(weekday(heat.end), 0, 'the last column ends on a Sunday');
+  assert.equal(heat.weeks.length, 5, 'thirty days of retention snap out to five whole weeks');
+  for (const week of heat.weeks) assert.equal(week.length, 7);
+
+  const oldest = heat.weeks[0][0].date;
+  const windowStart = new Date(NOON - 29 * DAY).toISOString().slice(0, 10);
+  assert.ok(oldest <= windowStart, 'the grid reaches at least as far back as the retention window');
+});
+
+test('a transcript that outlived the sweep widens the grid rather than falling off it', () => {
+  const heat = heatmap([daysAgo(120)], { days: 30, now: NOON });
+  assert.ok(heat.weeks.length > 5, 'the grid grew past the retention window to hold the old transcript');
+  const dates = heat.weeks.flat().map((cell) => cell.date);
+  assert.ok(dates.includes(daysAgo(120).modified.slice(0, 10)), 'the old transcript has a tile');
+  assert.equal(heat.total, 1);
+});
+
+test('a day with more transcripts is shaded stronger than a day with one', () => {
+  const heat = heatmap([daysAgo(0), daysAgo(0), daysAgo(3)], { days: 30, now: NOON });
+  const cells = new Map(heat.weeks.flat().map((cell) => [cell.date, cell]));
+  const busy = cells.get(daysAgo(0).modified.slice(0, 10));
+  const quiet = cells.get(daysAgo(3).modified.slice(0, 10));
+
+  assert.equal(busy.count, 2);
+  assert.equal(quiet.count, 1);
+  assert.ok(busy.level > quiet.level, 'two sessions outrank one');
+  assert.equal(heat.max, 2);
+  assert.equal(heat.total, 3);
+});
+
+test('a quiet day is level zero and a saturated store still tops out at four', () => {
+  const many = Array.from({ length: 20 }, () => daysAgo(1));
+  const heat = heatmap([...many, daysAgo(2)], { days: 30, now: NOON });
+  const cells = new Map(heat.weeks.flat().map((cell) => [cell.date, cell]));
+
+  assert.equal(cells.get(daysAgo(1).modified.slice(0, 10)).level, 4);
+  assert.equal(cells.get(daysAgo(2).modified.slice(0, 10)).level, 1, 'one of twenty is the faintest lit shade');
+  assert.equal(cells.get(daysAgo(4).modified.slice(0, 10)).level, 0, 'a day nothing touched stays unlit');
+});
+
+test('the days after today are marked future and carry no count', () => {
+  const heat = heatmap([daysAgo(0)], { days: 30, now: NOON });
+  const today = new Date(NOON).toISOString().slice(0, 10);
+
+  for (const cell of heat.weeks.flat()) {
+    assert.equal(cell.future, cell.date > today, `${cell.date} is misfiled`);
+    if (cell.future) assert.equal(cell.count, 0, 'nothing can have happened after today');
+  }
+  assert.equal(heat.weeks.flat().find((cell) => cell.date === today).future, false);
+});
+
+test('a retention period long enough to outgrow the grid is capped, not unrolled', () => {
+  const heat = heatmap([], { days: 4000, now: NOON });
+  assert.equal(heat.weeks.length, HEAT_WEEKS_MAX);
+  assert.equal(weekday(heat.start), 1);
+  assert.equal(weekday(heat.end), 0);
+});
+
+test('the tile a session lands on is the date its row already prints', () => {
+  withTranscripts({ 'a.jsonl': { text: line({ type: 'user', message: { content: 'hi' } }) } }, (dir) => {
+    const report = sessionsWithSummaries(dir);
+    const lit = report.heat.weeks.flat().filter((cell) => cell.count > 0);
+    assert.equal(lit.length, 1);
+    assert.equal(lit[0].date, report.sessions[0].modified.slice(0, 10));
+  });
 });

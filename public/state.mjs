@@ -13,7 +13,7 @@ export const state = {
   pruneSort: 'oldest',
   pruneSelection: new Set(),
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
-  aux: { instructions: null, settings: null, sessions: null },
+  aux: { instructions: null, settings: null, sessions: null, sessionDay: null },
   pathCheck: null,
 };
 

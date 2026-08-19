@@ -189,6 +189,42 @@ const retentionTickTone = { soon: 'bg-warn', safe: 'bg-accent' };
 export const retentionTick = (soon) => cx(retentionTickBase, soon ? retentionTickTone.soon : retentionTickTone.safe);
 export const retentionScale = 'mt-1.5 flex justify-between font-mono text-2xs text-fg-subtle';
 
+export const meterPanels = 'mt-4 grid gap-5 border-t border-line pt-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-14';
+export const meterPanel = 'min-w-0';
+export const meterPanelHead = 'mb-2 flex flex-wrap items-baseline justify-between gap-2';
+export const meterPanelTitle = 'font-mono text-2xs font-semibold uppercase tracking-widest text-fg-subtle';
+export const heatBody = 'flex items-start gap-1.5';
+export const heatDayCol = 'grid grid-rows-7 gap-0.5 pt-4 font-mono text-2xs leading-3 text-fg-subtle';
+export const heatDayLabel = 'h-3 leading-3';
+export const heatMain = 'min-w-0 flex-1';
+export const heatScroll = 'overflow-x-auto pb-1';
+export const heatMonthRow = 'mb-1 grid grid-flow-col justify-start gap-0.5';
+export const heatMonthCell = 'relative h-3 w-3';
+export const heatMonthLabel = 'absolute top-0 left-0 font-mono text-2xs leading-3 whitespace-nowrap text-fg-subtle';
+export const heatGrid = 'grid grid-flow-col grid-rows-7 justify-start gap-0.5';
+export const heatBlank = 'size-3';
+
+const heatTileBase = 'size-3 cursor-pointer rounded-xs transition-[outline-color]';
+const heatTone = {
+  0: 'bg-heat-0',
+  1: 'bg-heat-1',
+  2: 'bg-heat-2',
+  3: 'bg-heat-3',
+  4: 'bg-heat-4',
+};
+export const heatTile = (level, selected) => cx(
+  heatTileBase,
+  pick(heatTone, level, 0),
+  selected ? 'outline-2 outline-offset-1 outline-fg' : 'outline-2 outline-offset-1 outline-transparent hover:outline-fg-subtle',
+);
+
+export const heatLegend = 'mt-2 flex items-center gap-1 font-mono text-2xs text-fg-subtle';
+export const heatLegendSwatch = (level) => cx('size-3 rounded-xs', pick(heatTone, level, 0));
+
+export const sectionLabelRow = 'mt-5 mb-2 flex flex-wrap items-center gap-3 first:mt-0';
+export const sectionLabelInline = 'font-mono text-2xs font-semibold uppercase tracking-widest text-fg-subtle';
+export const heatFilterClear = 'cursor-pointer rounded-md border border-line bg-surface px-1.5 py-0.5 font-mono text-2xs text-fg-muted transition-colors hover:border-line-strong hover:text-fg';
+
 export const provenanceRow = 'mt-0.5 mb-3.5 flex flex-wrap items-baseline gap-1.5 text-xs text-fg-muted';
 const provenanceLinkBase = 'cursor-pointer rounded-sm border border-transparent bg-transparent px-1 font-medium';
 const provenanceLinkState = {

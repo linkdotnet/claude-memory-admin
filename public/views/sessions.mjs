@@ -4,6 +4,7 @@ import { api } from '/api.mjs';
 import { state } from '/state.mjs';
 import { sizeLabel, sessionDate } from '/parts.mjs';
 import { selectMemory } from '/store.mjs';
+import { paint } from '/bus.mjs';
 
 const TITLE_SOURCE = {
   'ai-title': 'title Claude Code generated for this session',
@@ -99,6 +100,66 @@ function retentionTrack(sessions, days) {
   ]);
 }
 
+const WEEKDAYS = ['Mon', '', 'Wed', '', 'Fri', '', ''];
+const LEVELS = [0, 1, 2, 3, 4];
+
+function dayLabel(cell) {
+  if (cell.count === 0) return `no sessions on ${cell.date}`;
+  return cell.count === 1 ? `1 session on ${cell.date}` : `${cell.count} sessions on ${cell.date}`;
+}
+
+function heatCell(cell, selected, onPick) {
+  if (cell.future) return node('span', { class: ui.heatBlank });
+  const label = dayLabel(cell);
+  const on = cell.date === selected;
+  return node('button', {
+    class: ui.heatTile(cell.level, on),
+    title: label,
+    'aria-label': label,
+    'aria-pressed': on ? 'true' : 'false',
+    onclick: () => onPick(on ? null : cell.date),
+  });
+}
+
+function activityGrid(heat, selected, onPick) {
+  const months = node('div', { class: ui.heatMonthRow });
+  for (const label of heat.months) {
+    months.append(node('div', { class: ui.heatMonthCell }, [
+      label ? node('span', { class: ui.heatMonthLabel, text: label }) : null,
+    ]));
+  }
+
+  const grid = node('div', { class: ui.heatGrid });
+  for (const week of heat.weeks) {
+    for (const cell of week) grid.append(heatCell(cell, selected, onPick));
+  }
+
+  const weekdays = node('div', { class: ui.heatDayCol });
+  for (const label of WEEKDAYS) weekdays.append(node('span', { class: ui.heatDayLabel, text: label }));
+
+  const legend = node('div', { class: ui.heatLegend }, [node('span', { text: 'Less' })]);
+  for (const level of LEVELS) legend.append(node('span', { class: ui.heatLegendSwatch(level) }));
+  legend.append(node('span', { text: 'More' }));
+
+  return node('div', { class: ui.heatBody }, [
+    weekdays,
+    node('div', { class: ui.heatMain }, [
+      node('div', { class: ui.heatScroll }, [months, grid]),
+      legend,
+    ]),
+  ]);
+}
+
+function meterPanel(title, aside, body) {
+  return node('div', { class: ui.meterPanel }, [
+    node('div', { class: ui.meterPanelHead }, [
+      node('span', { class: ui.meterPanelTitle, text: title }),
+      aside,
+    ]),
+    body,
+  ]);
+}
+
 export async function renderSessions(container) {
   let data = state.aux.sessions;
   if (!data) {
@@ -121,6 +182,12 @@ export async function renderSessions(container) {
     byOrigin.get(memory.origin.sessionId).push(memory);
   }
 
+  const selected = state.aux.sessionDay;
+  const pickDay = (date) => {
+    state.aux.sessionDay = date;
+    paint('tab');
+  };
+
   container.append(node('p', { class: ui.noteTight, text: 'The transcripts sitting beside this store\u2019s memory. Claude Code deletes them once they pass the retention period and never touches memory/, so this is the evidence that expires while the memories stay. This tab only reads, and only the head of each file - nothing here deletes a transcript.' }));
 
   container.append(node('div', { class: ui.meter }, [
@@ -128,7 +195,10 @@ export async function renderSessions(container) {
       node('span', { class: ui.meterValue, text: String(data.count) }),
       node('span', { class: ui.meterUnit, text: data.count === 1 ? 'session kept' : 'sessions kept' }),
     ]),
-    retentionTrack(data.sessions, data.days),
+    node('div', { class: ui.meterPanels }, [
+      meterPanel('Retention', null, retentionTrack(data.sessions, data.days)),
+      data.heat ? meterPanel('Activity', null, activityGrid(data.heat, selected, pickDay)) : null,
+    ]),
     node('div', { class: ui.meterFacts }, [
       node('span', {}, [node('b', { class: ui.meterFactValue, text: sizeLabel(data.bytes) }), document.createTextNode(' on disk')]),
       node('span', {}, [node('b', { class: ui.meterFactValue, text: `${data.days} days` }), document.createTextNode(' retention (cleanupPeriodDays)')]),
@@ -140,9 +210,25 @@ export async function renderSessions(container) {
     node('p', { class: ui.meterNote, text: 'Sweep dates come from each file\u2019s mtime, which any copy or restore resets, so they are an estimate of when Claude Code will drop them rather than something the transcript recorded about itself.' }),
   ]));
 
-  container.append(node('div', { class: ui.sectionLabel, text: `Sessions \u00b7 ${data.count}` }));
+  const visible = selected
+    ? data.sessions.filter((session) => session.modified.slice(0, 10) === selected)
+    : data.sessions;
+  const listHead = node('div', { class: ui.sectionLabelRow }, [
+    node('span', {
+      class: ui.sectionLabelInline,
+      text: selected ? `Sessions \u00b7 ${visible.length} on ${selected}` : `Sessions \u00b7 ${data.count}`,
+    }),
+  ]);
+  if (selected) {
+    listHead.append(node('button', {
+      class: ui.heatFilterClear,
+      text: 'show every day',
+      onclick: () => pickDay(null),
+    }));
+  }
+  container.append(listHead);
   const card = node('div', { class: ui.card });
-  for (const session of data.sessions) {
+  for (const session of visible) {
     card.append(sessionRow(session, byOrigin.get(session.id) || []));
   }
   container.append(card);

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { HEAD_READS, readHead } from './projects.mjs';
-import { cleanupPeriodDays } from './settings.mjs';
+import { cleanupPeriodDays, DEFAULT_CLEANUP_PERIOD_DAYS } from './settings.mjs';
 import { ageInDays } from './stats.mjs';
 
 export const EXPIRY_WARNING_DAYS = 7;
@@ -145,6 +145,73 @@ export function retention(sessions, { projectDir = null, now = Date.now() } = {}
   };
 }
 
+export const HEAT_WEEKS_MAX = 53;
+export const HEAT_LEVELS = 4;
+
+const DAY_MS = 86400000;
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
+const startOfDay = (ms) => Math.floor(ms / DAY_MS) * DAY_MS;
+const mondayOf = (ms) => ms - ((new Date(ms).getUTCDay() + 6) % 7) * DAY_MS;
+const sundayOf = (ms) => ms + ((7 - new Date(ms).getUTCDay()) % 7) * DAY_MS;
+
+export function heatLevel(count, max) {
+  if (!count) return 0;
+  if (max <= HEAT_LEVELS) return count;
+  return Math.min(HEAT_LEVELS, Math.ceil((count / max) * HEAT_LEVELS));
+}
+
+export function heatmap(sessions, { days = DEFAULT_CLEANUP_PERIOD_DAYS, now = Date.now() } = {}) {
+  const today = startOfDay(now);
+  const counts = new Map();
+  for (const session of sessions) {
+    if (typeof session.modified !== 'string') continue;
+    const date = session.modified.slice(0, 10);
+    counts.set(date, (counts.get(date) || 0) + 1);
+  }
+
+  const span = Math.max(1, Math.round(days));
+  let earliest = today - (span - 1) * DAY_MS;
+  for (const date of counts.keys()) {
+    const at = Date.parse(`${date}T00:00:00.000Z`);
+    if (!Number.isNaN(at) && at < earliest) earliest = at;
+  }
+
+  const end = sundayOf(today);
+  let start = mondayOf(earliest);
+  if (Math.round((end + DAY_MS - start) / (7 * DAY_MS)) > HEAT_WEEKS_MAX) {
+    start = end - (HEAT_WEEKS_MAX * 7 - 1) * DAY_MS;
+  }
+
+  const max = counts.size ? Math.max(...counts.values()) : 0;
+  const weeks = [];
+  const months = [];
+  let labelled = null;
+  for (let monday = start; monday <= end; monday += 7 * DAY_MS) {
+    const week = [];
+    for (let offset = 0; offset < 7; offset += 1) {
+      const ms = monday + offset * DAY_MS;
+      const date = dayKey(ms);
+      const count = counts.get(date) || 0;
+      week.push({ date, count, level: heatLevel(count, max), future: ms > today });
+    }
+    const month = new Date(monday).getUTCMonth();
+    months.push(month === labelled ? null : MONTH_LABELS[month]);
+    labelled = month;
+    weeks.push(week);
+  }
+
+  return {
+    weeks,
+    months,
+    max,
+    total: [...counts.values()].reduce((sum, value) => sum + value, 0),
+    start: dayKey(start),
+    end: dayKey(end),
+  };
+}
+
 export function originSession(slugDir, sessionId) {
   if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return null;
   const file = path.join(slugDir, `${sessionId}.jsonl`);
@@ -166,6 +233,7 @@ export function sessionsWithSummaries(slugDir, { projectDir = null, now = Date.n
   const report = retention(listSessions(slugDir), { projectDir, now });
   return {
     ...report,
+    heat: heatmap(report.sessions, { days: report.days, now }),
     sessions: report.sessions.map((session) => ({
       ...session,
       ...sessionSummary(session.file, { bytes: session.bytes }),

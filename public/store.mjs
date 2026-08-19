@@ -5,7 +5,7 @@ import { paint } from '/bus.mjs';
 export async function openStore(id, { keepTab = false } = {}) {
   if (id !== state.storeId) state.pruneSelection.clear();
   state.storeId = id;
-  state.aux = { instructions: null, settings: null, sessions: null };
+  state.aux = { instructions: null, settings: null, sessions: null, sessionDay: null };
   state.pathCheck = null;
   if (!keepTab) {
     const opening = state.stores.find((store) => store.id === id);
@@ -42,7 +42,7 @@ export async function openStore(id, { keepTab = false } = {}) {
     api(`/api/stores/${encodeURIComponent(id)}/settings`).catch(() => null),
   ]).then(([instructions, settings]) => {
     if (state.storeId !== id) return;
-    state.aux = { instructions, settings };
+    state.aux = { ...state.aux, instructions, settings };
     paint('tabs');
     if (!listed) return;
     listed.context = instructions ? instructions.problems.length : 0;
