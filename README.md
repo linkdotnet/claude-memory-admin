@@ -25,9 +25,20 @@ itself, and worth saying out loud.
 
 ![The Prune tab, showing how much of the MEMORY.md load limit a project uses and a sortable list of memories by age, size and inbound links](assets/prune.webp)
 
+### Health: every problem found, worst first
+
+![The Health tab in the light theme, listing checks ranked by severity: a broken wikilink, a memory no index entry points at, index hooks over 200 characters, hooks that only restate the file's own description, and an empty section](assets/health.webp)
+
 ### Graph: see how memories link to each other
 
-![The Graph tab, showing memories as nodes coloured by type with wikilinks as edges](assets/graph.webp)
+![The Graph tab, showing memories as nodes coloured by type with wikilinks as edges, orphans below a dashed line and a dashed outline where a link points at nothing](assets/graph.webp)
+
+### Context: what every session loads before a project is even chosen
+
+![The Global entry's Context tab, showing the estimated token cost of the user-scope instruction files, a file reached twice through both an import and the rules directory, and the order the files load in](assets/context.webp)
+
+There is a light theme and a dark one, toggled with `t`; the Health shot above is
+the light one and the rest are dark.
 
 ---
 

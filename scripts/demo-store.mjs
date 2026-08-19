@@ -60,6 +60,21 @@ const INDEX_SECTIONS = [
   ['CI', ['ci-cache-keyed-on-lockfile', 'ci-flaky-test-quarantine']],
 ];
 
+const HOOKS = {
+  'queue-retry-backoff': 'read before touching any retry, backoff or jitter constant',
+  'queue-visibility-timeout': 'read before changing the visibility timeout',
+  'db-migrations-are-forward-only': 'read before writing a migration',
+  'db-connection-pool-sizing': 'read when the pool looks saturated',
+  'api-error-envelope': 'read before adding a handler or a new error path',
+  'logging-structured-only': 'read before adding a log line',
+  'feature-flags-are-booleans': 'read before adding a flag',
+  'build-output-is-not-committed': 'read before committing anything generated',
+  'auth-token-refresh-race': 'read before touching token refresh',
+  'ui-empty-states-are-required': 'read before shipping a list view',
+  'test-fixtures-over-mocks': 'read before reaching for a mock',
+  'ci-cache-keyed-on-lockfile': 'read before changing the CI cache key',
+};
+
 // A couple of deliberately long hooks, so the Prune tab has something to flag.
 const LONG_HOOKS = {
   'api-versioning-in-path': 'versions live in the path and never in a header, because the CDN in front of the API ignores Vary and served one version to clients that asked for another; old versions stay reachable until telemetry shows zero calls for a full billing period, and only then are they removed in a separate change',
@@ -91,7 +106,7 @@ for (const [section, names] of INDEX_SECTIONS) {
   lines.push(`## ${section}`, '');
   for (const name of names) {
     const memory = MEMORIES.find((m) => m[0] === name);
-    const hook = LONG_HOOKS[name] || memory[2];
+    const hook = LONG_HOOKS[name] || HOOKS[name] || memory[2];
     lines.push(`- [${name.replace(/-/g, ' ')}](${name}.md) — ${hook}`);
   }
   lines.push('');
