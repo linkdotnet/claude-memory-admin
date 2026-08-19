@@ -119,3 +119,50 @@ test('the global store answers the read endpoints and holds no memory', async ()
     server.close();
   }
 });
+
+test('the sessions endpoint reads the transcripts beside a store, and refuses stores that have none', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    const alpha = listing.stores.find((s) => s.slug === '-Users-demo-repos-alpha');
+    const data = await (await fetch(`${base}/api/stores/${encodeURIComponent(alpha.id)}/sessions`)).json();
+
+    assert.equal(data.count, 1, 'the subagent transcript is not a session');
+    assert.equal(data.sessions[0].title, 'Alpha project conventions');
+    assert.equal(data.days, 30);
+    assert.ok(!('file' in data.sessions[0]) || path.isAbsolute(data.sessions[0].file));
+
+    for (const kind of ['global', 'agent-user']) {
+      const store = listing.stores.find((s) => s.kind === kind);
+      if (!store) continue;
+      const response = await fetch(`${base}/api/stores/${encodeURIComponent(store.id)}/sessions`);
+      assert.equal(response.status, 400, `${kind} should have no sessions endpoint`);
+      assert.match((await response.json()).error, /no session transcripts/);
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test('the store model carries provenance for every memory that claims one', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    const alpha = listing.stores.find((s) => s.slug === '-Users-demo-repos-alpha');
+    const model = await (await fetch(`${base}/api/stores/${encodeURIComponent(alpha.id)}`)).json();
+
+    const byFile = new Map(model.memories.map((m) => [m.file, m]));
+    assert.equal(byFile.get('alpha-setup.md').origin.present, true, 'its transcript is still on disk');
+    assert.equal(byFile.get('beta-conventions.md').origin.present, false, 'its transcript is swept');
+    assert.equal(model.sessions.count, 1);
+    assert.equal(model.sessions.retentionDays, 30);
+  } finally {
+    server.close();
+  }
+});

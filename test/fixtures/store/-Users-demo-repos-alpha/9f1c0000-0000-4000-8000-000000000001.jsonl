@@ -1,2 +1,4 @@
-{"type":"mode","sessionId":"9f1c0000-0000-4000-8000-000000000001"}
-{"type":"user","cwd":"/Users/demo/repos/alpha","timestamp":"2026-01-05T09:00:00.000Z"}
+{"type":"mode","mode":"normal","sessionId":"9f1c0000-0000-4000-8000-000000000001"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Set up the alpha project conventions"},"uuid":"aaaa0000-0000-4000-8000-000000000001","timestamp":"2026-01-05T09:00:00.000Z","cwd":"/Users/demo/repos/alpha","gitBranch":"main","version":"2.1.234","slug":"alpha-setup-quiet-harbour"}
+{"parentUuid":"aaaa0000-0000-4000-8000-000000000001","isSidechain":false,"type":"assistant","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"Done."}]},"uuid":"aaaa0000-0000-4000-8000-000000000002","timestamp":"2026-01-05T09:01:00.000Z"}
+{"type":"ai-title","aiTitle":"Alpha project conventions","sessionId":"9f1c0000-0000-4000-8000-000000000001"}

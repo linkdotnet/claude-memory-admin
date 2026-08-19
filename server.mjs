@@ -16,6 +16,7 @@ import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
 import { verifyPaths } from './src/pathcheck.mjs';
+import { sessionsWithSummaries, transcriptDir } from './src/sessions.mjs';
 import {
   addIndexEntry,
   addIndexEntryPreview,
@@ -265,6 +266,14 @@ async function handleApi(req, res, url) {
     }
     const { memories } = buildStore(store);
     return sendJson(res, 200, verifyPaths(projectDir, memories));
+  }
+
+  if (action === 'sessions' && req.method === 'GET') {
+    const slugDir = transcriptDir(store);
+    if (!slugDir) {
+      return sendJson(res, 400, { error: 'This store keeps no session transcripts.' });
+    }
+    return sendJson(res, 200, sessionsWithSummaries(slugDir, { projectDir: storeProjectDir(store) }));
   }
 
   if (action === 'settings' && req.method === 'GET') {

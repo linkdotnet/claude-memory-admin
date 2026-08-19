@@ -51,12 +51,16 @@ export function projectsRoot() {
   return resolveRoot().path;
 }
 
+// The escalation ladder for reading the head of a transcript: the small read
+// almost always suffices and the large one is the fallback.
+export const HEAD_READS = [16384, 131072];
+
 /**
  * Read the head of a file without pulling a multi-megabyte transcript into
  * memory. The `cwd` field shows up within the first few lines in practice, so
  * the small read almost always suffices and the large one is a fallback.
  */
-function readHead(file, bytes) {
+export function readHead(file, bytes) {
   const fd = fs.openSync(file, 'r');
   try {
     const buf = Buffer.alloc(bytes);
@@ -90,7 +94,7 @@ function findTranscripts(dir, depth = 2) {
 
 /** The first `cwd` in one transcript, escalating the read only if the small one missed. */
 function cwdInTranscript(file) {
-  for (const size of [16384, 131072]) {
+  for (const size of HEAD_READS) {
     let head;
     try {
       head = readHead(file, size);

@@ -5,6 +5,10 @@ export const VALID_TYPES = ['user', 'feedback', 'project', 'reference'];
 export const EMPTY_BODY_CHARS = 40;
 export const EMPTY_INSTRUCTION_CHARS = 10;
 export const HOOK_ECHO_OVERLAP = 0.9;
+export const EVIDENCE_WARNING_DAYS = 14;
+export const EVIDENCE_CRITICAL_DAYS = 7;
+
+const TRANSCRIPT_RESOLVED = new Set(['transcript', 'repo-root']);
 
 const VALID_TYPE_SET = new Set(VALID_TYPES);
 
@@ -167,6 +171,60 @@ export function checkEmptyInstructionFile(files) {
     empty.push({ kind: 'empty-instruction-file', severity: 'warn', file: item.file, scope: item.scope });
   }
   return empty;
+}
+
+export function checkProvenanceExpired(memories, resolveOrigin) {
+  if (typeof resolveOrigin !== 'function') return [];
+  return memories
+    .map((memory) => ({ memory, sessionId: memory.metadata?.originSessionId }))
+    .filter(({ sessionId }) => typeof sessionId === 'string' && sessionId)
+    .filter(({ sessionId }) => !resolveOrigin(sessionId))
+    .map(({ memory, sessionId }) => ({
+      kind: 'provenance-expired',
+      severity: 'warn',
+      file: memory.file,
+      name: memory.name,
+      sessionId,
+    }));
+}
+
+export function checkPathEvidenceExpiring(store, retention, { remembered = false } = {}) {
+  if (!store || store.kind !== 'auto' || remembered) return [];
+  if (!TRANSCRIPT_RESOLVED.has(store.resolvedBy)) return [];
+
+  const days = retention?.evidenceExpiresInDays;
+  if (typeof days !== 'number' || days > EVIDENCE_WARNING_DAYS) return [];
+
+  return [{
+    kind: 'path-evidence-expiring',
+    severity: days <= EVIDENCE_CRITICAL_DAYS ? 'bad' : 'warn',
+    path: store.path,
+    days,
+    retentionDays: retention.days,
+    sessionCount: retention.count,
+  }];
+}
+
+export function checkNoMemoryDespiteSessions(store, memories, retention) {
+  if (!store || store.kind !== 'auto' || memories.length) return [];
+  if (!store.autoMemory?.enabled || !store.autoMemory?.known) return [];
+  if (!retention || !retention.count) return [];
+
+  return [{
+    kind: 'no-memory-despite-sessions',
+    severity: 'warn',
+    sessionCount: retention.count,
+    retentionDays: retention.days,
+  }];
+}
+
+export function sessionChecks(store, memories, retention, { remembered = false, resolveOrigin = null } = {}) {
+  if (!retention) return [];
+  return [
+    ...checkProvenanceExpired(memories, resolveOrigin),
+    ...checkPathEvidenceExpiring(store, retention, { remembered }),
+    ...checkNoMemoryDespiteSessions(store, memories, retention),
+  ];
 }
 
 export function memoryChecks(memories, index) {

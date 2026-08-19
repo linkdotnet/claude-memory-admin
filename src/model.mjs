@@ -15,7 +15,9 @@ import { parseIndex, parseFrontmatter, extractWikilinks } from './parse.mjs';
 import { listMemoryFiles, memoryDir, resolveProjectPath, shortLabel } from './projects.mjs';
 import { autoMemoryState } from './settings.mjs';
 import { ageInDays, estimateTokens, findDuplicates, indexStats } from './stats.mjs';
-import { memoryChecks } from './checks.mjs';
+import { memoryChecks, sessionChecks } from './checks.mjs';
+import { listSessions, originSession, retention, transcriptDir } from './sessions.mjs';
+import { rememberedPath } from './pathcache.mjs';
 
 export const TRASH_DIR = '.trash';
 
@@ -95,9 +97,30 @@ function buildResolver(memories) {
   return (target) => byName.get(target) || byStem.get(target) || null;
 }
 
+function provenance(memory, resolveOrigin) {
+  const sessionId = memory.metadata?.originSessionId;
+  if (typeof sessionId !== 'string' || !sessionId) return null;
+  const session = resolveOrigin ? resolveOrigin(sessionId) : null;
+  return { sessionId, present: Boolean(session), modified: session ? session.modified : null };
+}
+
+function sessionContext(store) {
+  const slugDir = transcriptDir(store);
+  if (!slugDir) return { slugDir: null, retention: null, resolveOrigin: null, remembered: false };
+
+  const projectDir = store.pathExists ? store.path : null;
+  return {
+    slugDir,
+    retention: retention(listSessions(slugDir), { projectDir }),
+    resolveOrigin: (sessionId) => originSession(slugDir, sessionId),
+    remembered: Boolean(store.slug && rememberedPath(store.slug)),
+  };
+}
+
 export function buildStore(store) {
   const { dir } = store;
   const hasMemoryDir = fs.existsSync(dir);
+  const sessions = sessionContext(store);
 
   const indexRaw = readIfExists(path.join(dir, 'MEMORY.md'));
   const index = indexRaw === null ? null : parseIndex(indexRaw);
@@ -139,6 +162,7 @@ export function buildStore(store) {
       : referencedFiles.has(memory.file)
         ? 'referenced'
         : 'orphan';
+    memory.origin = provenance(memory, sessions.resolveOrigin);
   }
 
   const existingFiles = new Set(files);
@@ -175,6 +199,10 @@ export function buildStore(store) {
       ? [{ kind: 'long-hooks', severity: 'warn', count: health.longHooks.length, longest: health.longHooks[0] }]
       : []),
     ...memoryChecks(memories, index),
+    ...sessionChecks(store, memories, sessions.retention, {
+      remembered: sessions.remembered,
+      resolveOrigin: sessions.resolveOrigin,
+    }),
   ];
   health.issues.sort((a, b) => (a.severity === 'bad' ? 0 : 1) - (b.severity === 'bad' ? 0 : 1));
   health.issueCount = health.issues.length;
@@ -209,6 +237,16 @@ export function buildStore(store) {
     },
     duplicates: findDuplicates(memories),
     trash: listTrash(dir),
+    sessions: sessions.retention
+      ? {
+          count: sessions.retention.count,
+          bytes: sessions.retention.bytes,
+          retentionDays: sessions.retention.days,
+          evidenceExpiresInDays: sessions.retention.evidenceExpiresInDays,
+          expiringCount: sessions.retention.expiringCount,
+          remembered: sessions.remembered,
+        }
+      : null,
   };
 }
 
@@ -224,6 +262,7 @@ export function buildProject(root, slug) {
     kind: 'auto',
     dir: memoryDir(root, slug),
     path: resolved.path,
+    pathExists: resolved.exists,
     label: shortLabel(resolved.path),
     resolvedBy: resolved.resolvedBy,
     // The decode that could not be confirmed, offered as a starting point when

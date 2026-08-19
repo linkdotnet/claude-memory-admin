@@ -17,7 +17,7 @@ const state = {
   pruneSort: 'oldest',
   pruneSelection: new Set(),
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
-  aux: { instructions: null, settings: null },
+  aux: { instructions: null, settings: null, sessions: null },
   pathCheck: null,
 };
 
@@ -153,6 +153,7 @@ const TABS = [
   { id: 'graph', label: 'Graph' },
   { id: 'prune', label: 'Prune' },
   { id: 'context', label: 'Context' },
+  { id: 'sessions', label: 'Sessions' },
   { id: 'health', label: 'Health' },
   { id: 'settings', label: 'Settings' },
   { id: 'trash', label: 'Trash' },
@@ -169,6 +170,7 @@ function renderTabs() {
   for (const tab of TABS) {
     if (global && tab.id !== 'context') continue;
     if (!global && tab.id === 'context' && !hasProjectDir) continue;
+    if (tab.id === 'sessions' && !state.store.sessions?.count) continue;
     let badge = null;
     let tone = 'neutral';
     if (tab.id === 'memories') badge = String(state.store.memories.length);
@@ -180,6 +182,10 @@ function renderTabs() {
     if (tab.id === 'prune' && state.store.stats.index.level !== 'ok') {
       badge = '!';
       tone = state.store.stats.index.level === 'over' ? 'bad' : 'warn';
+    }
+    if (tab.id === 'sessions' && state.store.sessions) {
+      badge = String(state.store.sessions.count);
+      if (state.store.sessions.expiringCount) tone = 'warn';
     }
     if (tab.id === 'context' && state.aux.instructions?.problems.length) {
       badge = String(state.aux.instructions.problems.length);
@@ -278,12 +284,15 @@ function renderDetail() {
   ];
   if (!memory.nameMatchesFile) rows.push(['name', `${memory.name}  (differs from filename)`]);
   for (const [key, value] of Object.entries(memory.metadata)) {
-    if (key !== 'type' && key !== 'modified') rows.push([key, value]);
+    if (key !== 'type' && key !== 'modified' && key !== 'originSessionId') rows.push([key, value]);
   }
   for (const [key, value] of rows) {
     meta.append(node('dt', { class: ui.metaKey, text: key }), node('dd', { class: ui.metaValue, text: String(value) }));
   }
   card.append(meta);
+
+  const origin = provenanceLine(memory);
+  if (origin) card.append(origin);
 
   const body = node('div', { class: ui.prose });
   card.append(body);
@@ -863,6 +872,32 @@ function renderIssue(item, memories) {
     );
   }
 
+  if (item.kind === 'provenance-expired') {
+    return issue(
+      `Provenance gone: ${item.name}`,
+      `the session it was written in (${item.sessionId}) has been swept, so why this memory exists can no longer be traced. Nothing recovers it - judge the memory on what it says.`,
+      { bad, action: { label: 'Open', run: () => selectMemory(item.file) } },
+    );
+  }
+
+  if (item.kind === 'path-evidence-expiring') {
+    return issue(
+      item.days === 0
+        ? 'The last transcript naming this project is due to be swept'
+        : `The last transcript naming this project is swept in ${item.days} days`,
+      `${item.path} is recovered from the session transcripts, and Claude Code drops those after ${item.retentionDays} days while never touching memory/. Once the last one goes this store shows its raw folder name instead. Remember path records it now.`,
+      { bad, action: { label: 'Remember path\u2026', run: openRememberPathDialog } },
+    );
+  }
+
+  if (item.kind === 'no-memory-despite-sessions') {
+    return issue(
+      `${item.sessionCount} ${item.sessionCount === 1 ? 'session' : 'sessions'}, and no memory written`,
+      `auto memory is on for this project, but nothing has been saved in the ${item.retentionDays} days of transcripts kept here. Either nothing was worth remembering, or memory is not being written.`,
+      { bad },
+    );
+  }
+
   return issue(item.kind, JSON.stringify(item));
 }
 
@@ -886,6 +921,157 @@ const SETTINGS_PROBLEMS = {
 };
 
 const show = (value) => (value === undefined ? 'unset' : JSON.stringify(value));
+
+const TITLE_SOURCE = {
+  'ai-title': 'title Claude Code generated for this session',
+  slug: 'session slug, no generated title found in the part read',
+  prompt: 'first prompt, no generated title found in the part read',
+};
+
+const sizeLabel = (bytes) => (bytes >= 1048576
+  ? `${(bytes / 1048576).toFixed(1)} MB`
+  : `${(bytes / 1024).toFixed(1)} KB`);
+
+function sessionDate(iso) {
+  return iso ? iso.replace('T', ' ').replace(/\..*$/, '') : 'unknown';
+}
+
+function sessionRow(session, memoriesFrom) {
+  const soon = session.expiresInDays !== null && session.expiresInDays <= 7;
+  const caret = node('span', { class: ui.contextCaret, text: '\u25b8' });
+
+  const tags = [];
+  if (session.gitBranch) tags.push(node('span', { class: ui.badge('neutral'), text: session.gitBranch }));
+  if (session.model) tags.push(node('span', { class: ui.badge('neutral'), text: session.model }));
+  if (session.expiresInDays !== null) {
+    tags.push(node('span', {
+      class: ui.badge(soon ? 'warn' : 'neutral'),
+      text: session.expiresInDays === 0 ? 'due to be swept' : `swept in ${session.expiresInDays}d`,
+    }));
+  }
+  for (const memory of memoriesFrom) {
+    tags.push(node('span', { class: ui.badge('project'), text: memory.name }));
+  }
+
+  const body = node('div', { class: ui.contextBody, hidden: true });
+  const facts = node('dl', { class: ui.metaList });
+  const rows = [
+    ['session', session.id],
+    ['last active', `${sessionDate(session.modified)}  (file mtime)`],
+    ['size', sizeLabel(session.bytes)],
+  ];
+  if (session.cwd) rows.push(['cwd', session.cwd]);
+  if (session.version) rows.push(['version', session.version]);
+  if (session.titleFrom) rows.push(['title from', TITLE_SOURCE[session.titleFrom] || session.titleFrom]);
+  for (const [key, value] of rows) {
+    facts.append(node('dt', { class: ui.metaKey, text: key }), node('dd', { class: ui.metaValue, text: value }));
+  }
+  body.append(facts);
+  if (session.prompt) {
+    body.append(node('div', { class: ui.sectionLabel, text: 'Opened with' }));
+    body.append(node('p', { class: ui.note, text: session.prompt }));
+  }
+  if (memoriesFrom.length) {
+    body.append(node('div', { class: ui.sectionLabel, text: 'Memories written here' }));
+    const chips = node('div', { class: ui.linkRow });
+    for (const memory of memoriesFrom) {
+      chips.append(node('button', {
+        class: ui.chip(true),
+        text: memory.name,
+        onclick: () => selectMemory(memory.file),
+      }));
+    }
+    body.append(chips);
+  }
+
+  const button = node('button', {
+    class: ui.contextRowButton,
+    'aria-expanded': 'false',
+    onclick: (event) => {
+      const open = body.hidden;
+      body.hidden = !open;
+      caret.textContent = open ? '\u25be' : '\u25b8';
+      event.currentTarget.setAttribute('aria-expanded', open ? 'true' : 'false');
+    },
+  }, [
+    node('div', { class: ui.contextMain }, [
+      node('div', { class: ui.contextTags }, tags),
+      node('div', { class: ui.contextFile }, [caret, document.createTextNode(session.title || session.id)]),
+    ]),
+    node('div', { class: ui.contextSize, text: sessionDate(session.modified).slice(0, 10) }),
+  ]);
+
+  return node('div', {}, [button, body]);
+}
+
+function retentionTrack(sessions, days) {
+  const track = node('div', { class: ui.retentionTrack }, [node('span', { class: ui.retentionSweep })]);
+  for (const session of sessions) {
+    if (session.expiresInDays === null) continue;
+    const share = days > 0 ? Math.min(1, session.expiresInDays / days) : 1;
+    track.append(node('span', {
+      class: ui.retentionTick(session.expiresInDays <= 7),
+      style: `left: ${(share * 100).toFixed(2)}%`,
+      title: `${session.title || session.id}\nswept in ${session.expiresInDays} days`,
+    }));
+  }
+  return node('div', {}, [
+    track,
+    node('div', { class: ui.retentionScale }, [
+      node('span', { text: 'swept' }),
+      node('span', { text: `today · kept ${days} days` }),
+    ]),
+  ]);
+}
+
+async function renderSessions(container) {
+  let data = state.aux.sessions;
+  if (!data) {
+    container.append(node('p', { class: ui.note, text: 'Reading session transcripts\u2026' }));
+    try {
+      data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/sessions`);
+    } catch (err) {
+      container.textContent = '';
+      return container.append(node('p', { class: ui.note, text: err.message }));
+    }
+    if (state.tab !== 'sessions') return;
+    state.aux.sessions = data;
+  }
+  container.textContent = '';
+
+  const byOrigin = new Map();
+  for (const memory of state.store.memories) {
+    if (!memory.origin?.present) continue;
+    if (!byOrigin.has(memory.origin.sessionId)) byOrigin.set(memory.origin.sessionId, []);
+    byOrigin.get(memory.origin.sessionId).push(memory);
+  }
+
+  container.append(node('p', { class: ui.noteTight, text: 'The transcripts sitting beside this store\u2019s memory. Claude Code deletes them once they pass the retention period and never touches memory/, so this is the evidence that expires while the memories stay. This tab only reads, and only the head of each file - nothing here deletes a transcript.' }));
+
+  container.append(node('div', { class: ui.meter }, [
+    node('div', { class: ui.meterTop }, [
+      node('span', { class: ui.meterValue, text: String(data.count) }),
+      node('span', { class: ui.meterUnit, text: data.count === 1 ? 'session kept' : 'sessions kept' }),
+    ]),
+    retentionTrack(data.sessions, data.days),
+    node('div', { class: ui.meterFacts }, [
+      node('span', {}, [node('b', { class: ui.meterFactValue, text: sizeLabel(data.bytes) }), document.createTextNode(' on disk')]),
+      node('span', {}, [node('b', { class: ui.meterFactValue, text: `${data.days} days` }), document.createTextNode(' retention (cleanupPeriodDays)')]),
+      node('span', {}, [
+        node('b', { class: ui.meterFactValue, text: data.evidenceExpiresInDays === null ? '-' : `${data.evidenceExpiresInDays} days` }),
+        document.createTextNode(' until the last proof of this path goes'),
+      ]),
+    ]),
+    node('p', { class: ui.meterNote, text: 'Sweep dates come from each file\u2019s mtime, which any copy or restore resets, so they are an estimate of when Claude Code will drop them rather than something the transcript recorded about itself.' }),
+  ]));
+
+  container.append(node('div', { class: ui.sectionLabel, text: `Sessions \u00b7 ${data.count}` }));
+  const card = node('div', { class: ui.card });
+  for (const session of data.sessions) {
+    card.append(sessionRow(session, byOrigin.get(session.id) || []));
+  }
+  container.append(card);
+}
 
 async function renderSettings(container) {
   let data = state.aux.settings;
@@ -1935,6 +2121,7 @@ function renderTab() {
   if (state.tab === 'memories') renderMemories(container);
   else if (state.tab === 'prune') renderPrune(container);
   else if (state.tab === 'context') renderContext(container);
+  else if (state.tab === 'sessions') renderSessions(container);
   else if (state.tab === 'index') renderIndex(container);
   else if (state.tab === 'health') renderHealth(container);
   else if (state.tab === 'settings') renderSettings(container);
@@ -1987,6 +2174,49 @@ async function sweepIssues() {
   renderStores();
 }
 
+function provenanceLine(memory) {
+  const origin = memory.origin;
+  if (!origin) return null;
+
+  const known = state.aux.sessions?.sessions.find((session) => session.id === origin.sessionId);
+  const label = origin.present ? (known?.title || origin.sessionId) : origin.sessionId;
+
+  const row = node('div', { class: ui.provenanceRow }, [node('span', { text: 'written in' })]);
+
+  if (origin.present) {
+    row.append(node('button', {
+      class: ui.provenanceLink(true),
+      text: label,
+      title: 'Open the Sessions tab',
+      onclick: () => goToTab('sessions'),
+    }));
+    if (known?.gitBranch) row.append(node('span', { text: `on ${known.gitBranch}` }));
+    if (origin.modified) row.append(node('span', { text: sessionDate(origin.modified).slice(0, 10) }));
+    if (!known) loadSessionsForProvenance();
+  } else {
+    row.append(node('span', {
+      class: ui.provenanceLink(false),
+      text: label,
+      title: 'This transcript is no longer on disk',
+    }));
+    row.append(node('span', { text: '- transcript swept, so why this memory exists can no longer be traced' }));
+  }
+  return row;
+}
+
+async function loadSessionsForProvenance() {
+  if (state.aux.sessions || !state.store?.sessions?.count) return;
+  const id = state.storeId;
+  try {
+    const data = await api(`/api/stores/${encodeURIComponent(id)}/sessions`);
+    if (state.storeId !== id) return;
+    state.aux.sessions = data;
+    renderTab();
+  } catch {
+    return;
+  }
+}
+
 function renderStoreHeader() {
   const store = state.store;
   el('project-title').textContent = store.label;
@@ -2029,6 +2259,18 @@ function renderStoreHeader() {
     ]));
   }
 
+  const evidence = store.sessions?.evidenceExpiresInDays;
+  if (!store.sessions?.remembered
+      && (store.resolvedBy === 'transcript' || store.resolvedBy === 'repo-root')
+      && typeof evidence === 'number' && evidence <= 14) {
+    sub.append(node('span', { class: ui.subWarn }, [
+      document.createTextNode(evidence === 0
+        ? 'the last transcript proving this path is due to be swept - the store keeps its memories and loses its name  '
+        : `the last transcript proving this path is swept in ${evidence} days, and nothing else records it  `),
+      node('button', { class: ui.linkButton, text: 'Remember path\u2026', onclick: openRememberPathDialog }),
+    ]));
+  }
+
   const auto = store.autoMemory;
   if (auto && auto.known && !auto.enabled) {
     sub.append(node('span', { class: ui.subWarn, text: auto.scope === 'env'
@@ -2040,7 +2282,7 @@ function renderStoreHeader() {
 async function openStore(id, { keepTab = false } = {}) {
   if (id !== state.storeId) state.pruneSelection.clear();
   state.storeId = id;
-  state.aux = { instructions: null, settings: null };
+  state.aux = { instructions: null, settings: null, sessions: null };
   state.pathCheck = null;
   if (!keepTab) {
     const opening = state.stores.find((store) => store.id === id);

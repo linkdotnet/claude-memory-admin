@@ -182,6 +182,21 @@ export const indexLineText = ({ kind = 'text', clickable = false, dropped = fals
   dropped && 'line-through decoration-line-strong',
 );
 
+export const retentionTrack = 'relative mt-1 h-9 overflow-hidden rounded-md border border-line bg-surface-sunken';
+export const retentionSweep = 'absolute inset-y-0 left-0 border-l border-dashed border-danger';
+const retentionTickBase = 'absolute top-2 bottom-2 w-0.5 -translate-x-1/2 rounded-full';
+const retentionTickTone = { soon: 'bg-warn', safe: 'bg-accent' };
+export const retentionTick = (soon) => cx(retentionTickBase, soon ? retentionTickTone.soon : retentionTickTone.safe);
+export const retentionScale = 'mt-1.5 flex justify-between font-mono text-2xs text-fg-subtle';
+
+export const provenanceRow = 'mt-0.5 mb-3.5 flex flex-wrap items-baseline gap-1.5 text-xs text-fg-muted';
+const provenanceLinkBase = 'cursor-pointer rounded-sm border border-transparent bg-transparent px-1 font-medium';
+const provenanceLinkState = {
+  live: 'bg-accent-surface text-accent hover:border-accent-line',
+  dead: 'cursor-help bg-danger-surface text-danger line-through',
+};
+export const provenanceLink = (live) => cx(provenanceLinkBase, live ? provenanceLinkState.live : provenanceLinkState.dead);
+
 export const cutLine = 'my-2.5 flex items-center gap-2.5 before:flex-1 before:border-t before:border-dashed before:border-danger after:flex-1 after:border-t after:border-dashed after:border-danger';
 export const cutLabel = 'flex-none font-mono text-2xs whitespace-nowrap text-danger';
 

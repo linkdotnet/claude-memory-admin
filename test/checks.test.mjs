@@ -11,6 +11,9 @@ import {
   checkHookRepeatsDescription,
   checkIndexContinuation,
   checkMissingDescription,
+  checkNoMemoryDespiteSessions,
+  checkPathEvidenceExpiring,
+  checkProvenanceExpired,
   checkUnknownType,
 } from '../src/checks.mjs';
 import { parseIndex } from '../src/parse.mjs';
@@ -175,4 +178,79 @@ test('an instruction file is empty when nothing but frontmatter survives', () =>
 test('a file loaded twice is reported empty at most once', () => {
   const twice = { file: '/repo/blank.md', scope: 'user', kind: 'import', text: '---\na: b\n---\n' };
   assert.equal(checkEmptyInstructionFile([twice, { ...twice, scope: 'project' }]).length, 1);
+});
+
+const transcriptStore = (over = {}) => ({
+  kind: 'auto',
+  slug: '-Users-demo-repos-alpha',
+  path: '/Users/demo/repos/alpha',
+  resolvedBy: 'transcript',
+  autoMemory: { enabled: true, known: true },
+  ...over,
+});
+
+const retentionOf = (over = {}) => ({ days: 30, count: 4, evidenceExpiresInDays: 30, ...over });
+
+test('a memory whose origin transcript is gone is reported, one whose transcript is there is not', () => {
+  const live = memory({ file: 'kept.md', name: 'kept', metadata: { originSessionId: 'live-0001' } });
+  const swept = memory({ file: 'lost.md', name: 'lost', metadata: { originSessionId: 'gone-0002' } });
+  const plain = memory({ file: 'plain.md', name: 'plain', metadata: {} });
+
+  const issues = checkProvenanceExpired([live, swept, plain], (id) => (id === 'live-0001' ? { id } : null));
+
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].kind, 'provenance-expired');
+  assert.equal(issues[0].severity, 'warn');
+  assert.equal(issues[0].file, 'lost.md');
+  assert.equal(issues[0].sessionId, 'gone-0002');
+});
+
+test('provenance is only judged when there is something to judge it against', () => {
+  const orphan = memory({ metadata: { originSessionId: 'gone-0002' } });
+  assert.deepEqual(checkProvenanceExpired([orphan], null), []);
+});
+
+test('the path warning sharpens as the last transcript nears the sweep', () => {
+  assert.deepEqual(checkPathEvidenceExpiring(transcriptStore(), retentionOf()), [], 'a full period away is not news');
+
+  const [soon] = checkPathEvidenceExpiring(transcriptStore(), retentionOf({ evidenceExpiresInDays: 12 }));
+  assert.equal(soon.kind, 'path-evidence-expiring');
+  assert.equal(soon.severity, 'warn');
+
+  const [urgent] = checkPathEvidenceExpiring(transcriptStore(), retentionOf({ evidenceExpiresInDays: 3 }));
+  assert.equal(urgent.severity, 'bad');
+  assert.equal(urgent.days, 3);
+});
+
+test('a path already recorded, or never recovered from a transcript, is not warned about', () => {
+  const expiring = retentionOf({ evidenceExpiresInDays: 2 });
+
+  assert.deepEqual(checkPathEvidenceExpiring(transcriptStore(), expiring, { remembered: true }), [],
+    'Remember path has already preserved it');
+  assert.deepEqual(checkPathEvidenceExpiring(transcriptStore({ resolvedBy: 'remembered' }), expiring), []);
+  assert.deepEqual(checkPathEvidenceExpiring(transcriptStore({ resolvedBy: 'slug' }), expiring), []);
+  assert.deepEqual(checkPathEvidenceExpiring(transcriptStore({ resolvedBy: 'unresolved' }), expiring), [],
+    'a name already lost cannot be about to be lost');
+  assert.deepEqual(checkPathEvidenceExpiring({ kind: 'agent-user' }, expiring), []);
+});
+
+test('sessions with nothing saved from them are reported only when memory is on and known to be', () => {
+  const [issue] = checkNoMemoryDespiteSessions(transcriptStore(), [], retentionOf({ count: 12 }));
+  assert.equal(issue.kind, 'no-memory-despite-sessions');
+  assert.equal(issue.sessionCount, 12);
+
+  assert.deepEqual(checkNoMemoryDespiteSessions(transcriptStore(), [memory()], retentionOf()), [],
+    'a store with memory is working');
+  assert.deepEqual(checkNoMemoryDespiteSessions(transcriptStore(), [], retentionOf({ count: 0 })), [],
+    'no sessions is not evidence of anything');
+  assert.deepEqual(
+    checkNoMemoryDespiteSessions(transcriptStore({ autoMemory: { enabled: false, known: true } }), [], retentionOf()),
+    [],
+    'auto memory being off already explains the emptiness',
+  );
+  assert.deepEqual(
+    checkNoMemoryDespiteSessions(transcriptStore({ autoMemory: { enabled: true, known: false } }), [], retentionOf()),
+    [],
+    'an assumed-on default is not enough to accuse anything',
+  );
 });

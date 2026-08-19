@@ -80,7 +80,9 @@ project is to the cliff, and makes it quick to get back under it.
   session transcripts on a retention period but never touches `memory/`, so a
   project eventually loses the only proof of what it was called. **Remember
   path** records one you confirm, and is the single thing this app writes
-  outside a `memory/` directory.
+  outside a `memory/` directory. It is now offered *before* that happens: the
+  project header counts down the days until the last transcript naming the
+  project is swept, rather than waiting until the name is already gone.
 - **Where the store is** is read the way Claude Code reads it: `autoMemoryDirectory`
   from any settings layer, managed policy through project and local, not just
   `~/.claude/settings.json`. A value that is neither absolute nor `~/`-prefixed
@@ -96,13 +98,28 @@ project is to the cliff, and makes it quick to get back under it.
 - **Prune** (see below).
 - **Graph** the wikilinks between memories. Hovering dims everything that is not
   a neighbour, which is the only practical way to read a dense cluster.
+- **Where each memory came from.** Claude Code stamps `originSessionId` into a
+  memory's frontmatter, and the transcript it names sits next to the store until
+  the sweep takes it. The memory reads *written in "Release process notes", on
+  `main`* while that transcript is there, and says so plainly once it is gone:
+  a swept id is struck through in red, like a dead wikilink, because why the
+  memory exists can no longer be traced from anything on disk.
+- **Sessions**: the transcripts beside a store, with the retention window drawn
+  the way MEMORY.md's cutoff is - each session a tick, the sweep line where it
+  falls. Titles are the ones Claude Code generated, falling back to the session
+  slug and then the opening prompt; a session that names itself nowhere in the
+  part read is shown by id rather than given an invented name. Only the head of
+  each file is ever read, so a 200MB store of transcripts costs a quarter of a
+  second, and nothing on this tab deletes one.
 - **Health**: orphans, dangling pointers, broken wikilinks, files linked only
   mid-sentence, `name` fields that disagree with the filename, two files claiming
   one `name`, a file bulleted twice, a blank `description`, a `type` outside the
   four documented ones, a memory that is frontmatter and little else, a hook that
   only restates the description it points at, a heading with nothing under it, and
-  entries that spill onto a second line. An orphan can be given the `MEMORY.md`
-  bullet it is missing without leaving the page.
+  entries that spill onto a second line, a memory whose origin transcript has
+  been swept, a project whose last proof of its own path is about to be, and
+  sessions that produced no memory at all while auto memory was on. An orphan
+  can be given the `MEMORY.md` bullet it is missing without leaving the page.
 - **Every count is visible before you click.** Each tab carries a badge, coloured
   amber for something to tidy and red for something actively broken, and the
   sidebar gives each store a dot of its worst severity - memory, instructions and
@@ -312,6 +329,11 @@ claude-memory-admin --root /tmp/memory-snapshot
   chain, unless you switch on the path check above, which then also walks that one
   project's directory. It only ever reads: no path a memory names is opened, only
   looked up in an index built from the project itself.
+- Session transcripts are read at the head only, 16KB and then at most 128KB, and
+  never deleted or rewritten. A transcript here reaches 13MB and the app has no
+  reason to hold one in memory. A session id read out of frontmatter is matched
+  against a strict id shape before it is joined to a path, and only ever looked
+  for in the store's own directory.
 - Every write target must resolve to a plain `.md` file inside that project's own
   `memory/` directory. `..`, absolute paths and subdirectories are refused.
 - One exception, and only when you ask for it: **Remember path** writes
@@ -355,6 +377,7 @@ ready to serve and never builds anything. After editing the source, run
 | `src/projects.mjs` | Project discovery, slug → real path resolution |
 | `src/settings.mjs` | Layered reads of Claude Code's settings files, and the report behind the Settings tab |
 | `src/pathcache.mjs` | The opt-in record of confirmed project paths |
+| `src/sessions.mjs` | Session transcripts: bounded head reads, retention, provenance |
 | `src/stores.mjs` | Store discovery: the user scope, auto memory and the three agent scopes |
 | `src/instructions.mjs` | CLAUDE.md chain, `@` imports and rules resolution |
 | `src/parse.mjs` | `MEMORY.md` and frontmatter parsers, wikilinks |
