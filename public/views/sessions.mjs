@@ -2,7 +2,7 @@ import * as ui from '/ui.mjs';
 import { node } from '/dom.mjs';
 import { api } from '/api.mjs';
 import { state } from '/state.mjs';
-import { sizeLabel, sessionDate } from '/parts.mjs';
+import { sizeLabel, sessionDate, isAt } from '/parts.mjs';
 import { selectMemory } from '/store.mjs';
 import { paint } from '/bus.mjs';
 
@@ -170,7 +170,7 @@ export async function renderSessions(container) {
       container.textContent = '';
       return container.append(node('p', { class: ui.note, text: err.message }));
     }
-    if (state.tab !== 'sessions') return;
+    if (!isAt('environment', 'sessions')) return;
     state.aux.sessions = data;
   }
   container.textContent = '';

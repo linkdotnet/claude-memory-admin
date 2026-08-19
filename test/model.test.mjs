@@ -6,12 +6,14 @@ import test from 'node:test';
 
 import { buildProject } from '../src/model.mjs';
 import { listProjects } from '../src/projects.mjs';
+import { buildWorklist } from '../public/views/worklist.mjs';
 import { allRoots, FIXTURE_ROOT, FIXTURE_SLUG, hasRealStore, REAL_ROOT } from './helpers.mjs';
 
-const KINDS = new Set(
-  [...fs.readFileSync(new URL('../public/views/issue.mjs', import.meta.url), 'utf8')
-    .matchAll(/item\.kind === '([a-z-]+)'/g)].map((match) => match[1]),
-);
+const kindsIn = (module) => [...fs
+  .readFileSync(new URL(`../public/views/${module}`, import.meta.url), 'utf8')
+  .matchAll(/item\.kind === '([a-z-]+)'/g)].map((match) => match[1]);
+
+const KINDS = new Set([...kindsIn('issue.mjs'), ...kindsIn('cost-issue.mjs')]);
 
 test('slugs resolve to real paths, or admit that they did not', () => {
   for (const root of allRoots) {
@@ -72,18 +74,32 @@ test('a wikilink with no target is reported, not silently dropped', () => {
   assert.equal(dangling[0].from, 'beta-conventions.md');
 });
 
-test('the health badge count always matches the number of rendered issues', () => {
-  // Two separate bugs came from counting a category the Health tab did not
-  // render: a badge of 5 over 4 rows, and a badge of 1 over an empty tab.
-  // health.issues is now the only source for both.
+test('the Cleanup badge count always matches the number of rendered rows', () => {
+  // Two separate bugs came from counting a category the tab did not render: a
+  // badge of 5 over 4 rows, and a badge of 1 over an empty tab. The badge now
+  // counts the worklist, so the worklist is what has to be renderable.
   for (const root of allRoots) {
     for (const listed of listProjects(root).filter((p) => p.hasMemoryDir)) {
-      const { health } = buildProject(root, listed.slug);
-      assert.equal(health.issueCount, health.issues.length, `${listed.slug}: count and list disagree`);
-      for (const item of health.issues) {
+      const project = buildProject(root, listed.slug);
+      assert.equal(project.health.issueCount, project.health.issues.length, `${listed.slug}: count and list disagree`);
+      for (const item of buildWorklist(project)) {
         assert.ok(KINDS.has(item.kind), `${listed.slug}: "${item.kind}" is counted but the UI cannot render it`);
         assert.ok(['bad', 'warn'].includes(item.severity));
       }
+    }
+  }
+});
+
+test('the rolled-up long-hooks issue never reaches the worklist twice', () => {
+  for (const root of allRoots) {
+    for (const listed of listProjects(root).filter((p) => p.hasMemoryDir)) {
+      const project = buildProject(root, listed.slug);
+      const items = buildWorklist(project);
+      assert.equal(items.filter((item) => item.kind === 'long-hooks').length, 0,
+        `${listed.slug}: the roll-up survived into the worklist`);
+      assert.equal(items.filter((item) => item.kind === 'long-hook').length,
+        project.stats.index.longHooks.length,
+        `${listed.slug}: one row per long hook`);
     }
   }
 });

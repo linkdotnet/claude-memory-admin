@@ -2,6 +2,7 @@ import * as ui from '/ui.mjs';
 import { node } from '/dom.mjs';
 import { api } from '/api.mjs';
 import { state } from '/state.mjs';
+import { isAt } from '/parts.mjs';
 
 const SETTINGS_PROBLEMS = {
   unparseable: (p) => [
@@ -34,7 +35,7 @@ export async function renderSettings(container) {
       container.textContent = '';
       return container.append(node('p', { class: ui.note, text: err.message }));
     }
-    if (state.tab !== 'settings') return;
+    if (!isAt('environment', 'settings')) return;
   }
   container.textContent = '';
 

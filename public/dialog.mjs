@@ -7,6 +7,13 @@ const TEXT_ENTRY = /^(text|search|url|email|tel|number|password)$/;
 
 export const isDialogOpen = () => Boolean(root().firstElementChild);
 
+export function closeDialog() {
+  const dialog = root().firstElementChild;
+  if (!dialog) return;
+  dialog.close();
+  dialog.remove();
+}
+
 export function openDialog({ title, subtitle, body, actions, focus }) {
   const previous = root().firstElementChild;
   if (previous) {

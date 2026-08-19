@@ -3,8 +3,9 @@ import { el, node } from '/dom.mjs';
 import { renderMarkdown } from '/markdown.mjs';
 import { state } from '/state.mjs';
 import { selectMemory, loadSessionsForProvenance } from '/store.mjs';
-import { goToTab, sessionDate } from '/parts.mjs';
+import { goTo, sessionDate } from '/parts.mjs';
 import { openDeleteDialog } from '/dialogs/delete.mjs';
+import { renderMemoryList } from '/views/memory-list.mjs';
 
 export function memoryLookup(project) {
   const byName = new Map();
@@ -26,25 +27,6 @@ export function renderBody(container, memory, project) {
   });
 }
 
-function memoryButton(memory) {
-  const active = state.selected === memory.file;
-  return node('button', {
-    class: ui.memoryItem(active),
-    'data-memory': memory.file,
-    'data-active': active ? '' : null,
-    onclick: () => selectMemory(memory.file),
-  }, [
-    node('span', { class: ui.memoryTop }, [
-      node('span', { class: ui.memoryName, text: memory.name }),
-      node('span', { class: ui.typeBadge(memory.type), text: memory.type }),
-      memory.status !== 'indexed'
-        ? node('span', { class: ui.badge('warn'), text: memory.status })
-        : null,
-    ]),
-    memory.description ? node('span', { class: ui.memoryDesc, text: memory.description }) : null,
-  ]);
-}
-
 export function renderMemories(container) {
   const project = state.store;
   if (!project.memories.length) {
@@ -53,16 +35,7 @@ export function renderMemories(container) {
   }
 
   const left = node('div');
-  const groups = new Map();
-  for (const memory of project.memories) {
-    const key = memory.section || (memory.status === 'indexed' ? 'Index' : 'Not in the index');
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(memory);
-  }
-  for (const [section, memories] of groups) {
-    left.append(node('div', { class: ui.sectionLabel, text: `${section} · ${memories.length}` }));
-    for (const memory of memories) left.append(memoryButton(memory));
-  }
+  renderMemoryList(left);
 
   const right = node('div', { id: 'detail', class: ui.detailPane });
   container.append(node('div', { class: ui.split }, [left, right]));
@@ -165,8 +138,8 @@ function provenanceLine(memory) {
     row.append(node('button', {
       class: ui.provenanceLink(true),
       text: label,
-      title: 'Open the Sessions tab',
-      onclick: () => goToTab('sessions'),
+      title: 'Open Environment \u203a Sessions',
+      onclick: () => goTo('environment', 'sessions'),
     }));
     if (known?.gitBranch) row.append(node('span', { text: `on ${known.gitBranch}` }));
     if (origin.modified) row.append(node('span', { text: sessionDate(origin.modified).slice(0, 10) }));

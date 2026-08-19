@@ -1,8 +1,33 @@
+export const SEGMENT_STORAGE = {
+  memory: 'navMemorySegment',
+  environment: 'navEnvironmentSegment',
+};
+
+const SEGMENTS = {
+  memory: ['list', 'index', 'graph'],
+  environment: ['instructions', 'settings', 'sessions'],
+};
+
+const storedSegment = (tab) => {
+  const value = localStorage.getItem(SEGMENT_STORAGE[tab]);
+  return SEGMENTS[tab].includes(value) ? value : SEGMENTS[tab][0];
+};
+
+const LIST_SORTS = ['section', 'oldest', 'largest', 'unlinked', 'name'];
+const storedListSort = () => {
+  const value = localStorage.getItem('memoryListSort');
+  return LIST_SORTS.includes(value) ? value : 'section';
+};
+
 export const state = {
   stores: [],
   storeId: null,
   store: null,
-  tab: 'memories',
+  tab: 'memory',
+  segment: {
+    memory: storedSegment('memory'),
+    environment: storedSegment('environment'),
+  },
   selected: null,
   showAll: false,
   collapsed: localStorage.getItem('sidebarCollapsed') === '1',
@@ -10,8 +35,9 @@ export const state = {
   spread: Number(localStorage.getItem('graphSpread')) || 1.6,
   query: '',
   search: null,
-  pruneSort: 'oldest',
-  pruneSelection: new Set(),
+  listSort: storedListSort(),
+  listSelection: new Set(),
+  selecting: false,
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
   aux: { instructions: null, settings: null, sessions: null, sessionDay: null },
   pathCheck: null,

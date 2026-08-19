@@ -1,15 +1,20 @@
 import { api, toast } from '/api.mjs';
 import { state, worst, worstSeverity } from '/state.mjs';
 import { paint } from '/bus.mjs';
+import { closeDialog } from '/dialog.mjs';
+import { goTo } from '/parts.mjs';
 
 export async function openStore(id, { keepTab = false } = {}) {
-  if (id !== state.storeId) state.pruneSelection.clear();
+  if (id !== state.storeId) {
+    state.listSelection.clear();
+    state.selecting = false;
+  }
   state.storeId = id;
   state.aux = { instructions: null, settings: null, sessions: null, sessionDay: null };
   state.pathCheck = null;
   if (!keepTab) {
     const opening = state.stores.find((store) => store.id === id);
-    state.tab = opening && opening.kind === 'global' ? 'context' : 'memories';
+    state.tab = opening && opening.kind === 'global' ? 'environment' : 'memory';
     state.selected = null;
   }
   paint('stores');
@@ -78,9 +83,8 @@ export async function sweepIssues() {
 
 export function selectMemory(file) {
   state.selected = file;
-  if (state.tab !== 'memories') {
-    state.tab = 'memories';
-    paint('tabs', 'tab');
+  if (state.tab !== 'memory' || state.segment.memory !== 'list') {
+    goTo('memory', 'list');
   } else {
     paint('tab');
   }
@@ -100,7 +104,8 @@ export async function loadSessionsForProvenance() {
   }
 }
 
-export async function restoreFromTrash(id) {
+export async function restoreFromTrash(id, { close = false } = {}) {
+  if (close) closeDialog();
   try {
     const result = await api(`/api/stores/${encodeURIComponent(state.storeId)}/restore`, {
       method: 'POST',

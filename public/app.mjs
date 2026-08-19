@@ -1,33 +1,23 @@
-import { renderGraph } from '/graph.mjs';
 import { isDialogOpen } from '/dialog.mjs';
 import { el, node } from '/dom.mjs';
 import * as ui from '/ui.mjs';
 import { state } from '/state.mjs';
 import { toast } from '/api.mjs';
 import { register, paint } from '/bus.mjs';
-import { openStore, reloadStores, selectMemory } from '/store.mjs';
+import { openStore, reloadStores } from '/store.mjs';
 import { renderStores } from '/views/stores.mjs';
 import { renderTabs, renderStoreHeader } from '/views/header.mjs';
-import { renderMemories } from '/views/memories.mjs';
-import { renderIndex } from '/views/index.mjs';
-import { renderContext } from '/views/context.mjs';
-import { renderHealth } from '/views/health.mjs';
-import { renderSessions } from '/views/sessions.mjs';
-import { renderSettings } from '/views/settings.mjs';
-import { renderTrash } from '/views/trash.mjs';
-import { renderPrune } from '/views/prune.mjs';
+import { renderMemory } from '/views/memory.mjs';
+import { renderCleanup } from '/views/cleanup.mjs';
+import { renderEnvironment } from '/views/environment.mjs';
 import { renderSearch, scheduleSearch, clearSearch } from '/views/search.mjs';
 import { openStoreDeleteDialog } from '/dialogs/store-delete.mjs';
+import { openTrashDialog } from '/dialogs/trash.mjs';
 
 const TAB_VIEWS = {
-  memories: renderMemories,
-  prune: renderPrune,
-  context: renderContext,
-  sessions: renderSessions,
-  index: renderIndex,
-  health: renderHealth,
-  settings: renderSettings,
-  trash: renderTrash,
+  memory: renderMemory,
+  cleanup: renderCleanup,
+  environment: renderEnvironment,
 };
 
 function renderView() {
@@ -42,21 +32,7 @@ function renderTab() {
   const container = el('tab-content');
   container.textContent = '';
   const view = TAB_VIEWS[state.tab];
-  if (view) return view(container);
-  if (state.tab !== 'graph') return;
-
-  const wrap = node('div', { id: 'graph-wrap', class: ui.graphWrap });
-  container.append(wrap);
-  renderGraph(wrap, state.store.graph, {
-    selected: state.selected,
-    spread: state.spread,
-    onSelect: (file) => selectMemory(file),
-    onSpreadChange: (value) => {
-      state.spread = value;
-      localStorage.setItem('graphSpread', String(value));
-      paint('tab');
-    },
-  });
+  if (view) view(container);
 }
 
 function applyCollapsed() {
@@ -89,7 +65,9 @@ function toggleTheme() {
 function setCollapsed(value) {
   state.collapsed = value;
   applyCollapsed();
-  if (state.tab === 'graph' && state.store) requestAnimationFrame(() => paint('tab'));
+  if (state.tab === 'memory' && state.segment.memory === 'graph' && state.store) {
+    requestAnimationFrame(() => paint('tab'));
+  }
 }
 
 function applyStyles() {
@@ -119,6 +97,7 @@ async function init() {
   el('collapse').addEventListener('click', () => setCollapsed(true));
   el('expand').addEventListener('click', () => setCollapsed(false));
   el('delete-project').addEventListener('click', openStoreDeleteDialog);
+  el('undo').addEventListener('click', openTrashDialog);
   el('theme-toggle').addEventListener('click', toggleTheme);
   const scheme = matchMedia('(prefers-color-scheme: dark)');
   scheme.addEventListener('change', (event) => {

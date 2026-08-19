@@ -100,7 +100,7 @@ export const sectionLabel = 'mt-5 mb-2 font-mono text-2xs font-semibold uppercas
 export const note = 'text-xs text-fg-muted';
 export const noteTight = 'mt-0 mb-2.5 text-xs text-fg-muted';
 
-const memoryItemBase = 'mb-1.5 block w-full cursor-pointer rounded-md border bg-surface px-3 py-2.5 text-left transition-colors';
+const memoryItemBase = 'block min-w-0 flex-1 cursor-pointer rounded-md border bg-surface px-3 py-2.5 text-left transition-colors';
 const memoryItemState = {
   active: 'border-accent bg-accent-surface',
   idle: 'border-line hover:border-accent-line',
@@ -109,6 +109,9 @@ export const memoryItem = (active) => cx(memoryItemBase, active ? memoryItemStat
 export const memoryTop = 'mb-1 flex items-center gap-2';
 export const memoryName = 'flex-1 truncate text-sm font-medium text-fg';
 export const memoryDesc = 'line-clamp-2 text-xs text-fg-muted';
+export const memoryFacts = 'mt-1.5 flex flex-wrap gap-3 font-mono text-2xs text-fg-muted';
+export const memoryFact = (warn) => (warn ? 'text-warn' : 'text-fg-muted');
+export const listItemRow = 'mb-1.5 flex items-start gap-2';
 
 export const card = 'rounded-lg border border-line bg-surface p-5 shadow-card';
 export const detailHead = 'mb-1 flex items-start gap-3';
@@ -243,9 +246,6 @@ export const issueBody = 'min-w-0 flex-1';
 export const issueTitle = 'text-sm font-medium text-fg';
 export const issueDetail = 'font-mono text-2xs break-words text-fg-muted';
 
-export const cutSummary = 'mb-4 rounded-lg border border-danger-line bg-danger-surface px-4 py-3.5';
-export const cutSummaryHead = 'mb-1 text-sm font-semibold text-danger';
-
 export const meter = 'mb-5 rounded-lg border border-line bg-surface px-5 py-4';
 export const meterTop = 'mb-2.5 flex items-baseline gap-2.5';
 export const meterValue = 'font-mono text-2xl font-semibold tracking-tightest text-fg';
@@ -257,18 +257,10 @@ export const meterNote = 'mt-2.5 text-xs text-fg-muted';
 export const meterFacts = 'mt-3 flex flex-wrap gap-4 border-t border-line pt-3 font-mono text-2xs text-fg-muted';
 export const meterFactValue = 'font-semibold text-fg';
 
-export const pruneBar = 'mb-2.5 flex flex-wrap items-center gap-2.5';
-export const pruneSpacer = 'flex-1';
+export const listBar = 'mb-2.5 flex flex-wrap items-center gap-2.5';
+export const listSpacer = 'flex-1';
+export const segmentBar = 'mb-5 flex flex-wrap items-center gap-3';
 export const select = cx('cursor-pointer rounded-md border border-line bg-surface font-mono text-xs text-fg hover:border-line-strong focus:outline-none', controlPad.sm);
-
-const pruneRowBase = 'mb-1 flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 transition-colors';
-const pruneRowState = { on: 'border-danger-line bg-danger-surface', off: 'border-line bg-surface hover:border-accent-line' };
-export const pruneRow = (on) => cx(pruneRowBase, on ? pruneRowState.on : pruneRowState.off);
-export const pruneMain = 'min-w-0 flex-1';
-export const pruneName = 'block text-sm font-medium text-fg';
-export const pruneDesc = 'block truncate text-xs text-fg-muted';
-export const pruneFacts = 'flex flex-none gap-3 font-mono text-2xs text-fg-muted';
-export const pruneFact = (warn) => (warn ? 'text-warn' : 'text-fg-muted');
 
 export const dupe = 'mb-2 rounded-lg border border-line bg-surface px-3.5 py-3';
 export const dupeHead = 'mb-2 flex items-baseline gap-2 font-mono text-2xs text-fg-muted';
@@ -319,7 +311,7 @@ export const cascadeDetail = 'block font-mono text-2xs break-words text-fg-muted
 
 export const pathInput = cx('my-1 mb-3 w-full rounded-md border border-line bg-surface-sunken font-mono text-xs text-fg focus:border-accent focus:outline-none', controlPad.lg);
 export const textArea = cx('my-1 mb-1.5 block min-h-20 w-full resize-y rounded-md border border-line bg-surface-sunken font-mono text-xs leading-relaxed text-fg focus:border-accent focus:outline-none', controlPad.lg);
-export const hookEditor = 'mb-1.5 rounded-md border border-accent-line bg-surface-sunken px-3 py-2.5';
+export const hookEditor = 'mb-1.5 w-full rounded-md border border-accent-line bg-surface-sunken px-3 py-2.5';
 export const hookEditorFoot = 'flex justify-end gap-2';
 export const charCount = 'mb-3 flex items-baseline justify-between gap-3 font-mono text-2xs text-fg-subtle';
 export const charCountOver = 'mb-3 flex items-baseline justify-between gap-3 font-mono text-2xs text-warn';

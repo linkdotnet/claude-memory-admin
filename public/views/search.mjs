@@ -3,7 +3,7 @@ import { el, node } from '/dom.mjs';
 import { api, toast } from '/api.mjs';
 import { state } from '/state.mjs';
 import { paint } from '/bus.mjs';
-import { highlight } from '/parts.mjs';
+import { highlight, goTo } from '/parts.mjs';
 import { openStore } from '/store.mjs';
 
 let searchTimer = null;
@@ -52,7 +52,7 @@ export function renderSearch() {
     for (const result of group.results) {
       const button = node('button', {
         class: ui.result,
-        onclick: () => openFromSearch(group.id, result.file),
+        onclick: () => openFromSearch(group.id, result.file, 'list'),
       });
       const top = node('div', { class: ui.resultTop });
       const name = node('span', { class: ui.resultName });
@@ -85,12 +85,11 @@ export function renderSearch() {
   }
 }
 
-async function openFromSearch(id, file, tab = 'memories') {
+async function openFromSearch(id, file, segment = 'list') {
   clearSearch();
   if (id !== state.storeId) await openStore(id);
-  state.tab = tab;
   if (file) state.selected = file;
-  paint('tabs', 'tab');
+  goTo('memory', segment);
 }
 
 export function clearSearch() {

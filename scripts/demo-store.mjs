@@ -75,7 +75,7 @@ const HOOKS = {
   'ci-cache-keyed-on-lockfile': 'read before changing the CI cache key',
 };
 
-// A couple of deliberately long hooks, so the Prune tab has something to flag.
+// A couple of deliberately long hooks, so the Cleanup tab has something to flag.
 const LONG_HOOKS = {
   'api-versioning-in-path': 'versions live in the path and never in a header, because the CDN in front of the API ignores Vary and served one version to clients that asked for another; old versions stay reachable until telemetry shows zero calls for a full billing period, and only then are they removed in a separate change',
   'ci-flaky-test-quarantine': 'a flaky test is moved to the quarantine list with a link to the issue that tracks it, never skipped inline, because an inline skip has no owner and no expiry and will still be there a year later; the list is reviewed weekly and anything older than a month is either fixed or deleted outright',

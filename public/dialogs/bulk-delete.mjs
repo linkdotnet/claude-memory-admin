@@ -46,7 +46,8 @@ export async function openBulkDeleteDialog(files) {
       method: 'POST',
       body: JSON.stringify({ files, label: `${memories.length} pruned memories` }),
     });
-    state.pruneSelection.clear();
+    state.listSelection.clear();
+    state.selecting = false;
     if (doomed.has(state.selected)) state.selected = null;
     await openStore(state.storeId, { keepTab: true });
     toast(`Deleted ${memories.length} memories`, {

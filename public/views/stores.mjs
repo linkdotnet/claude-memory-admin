@@ -13,9 +13,9 @@ function storeSubtitle(store) {
 
 function issueTitle(store) {
   const parts = [];
-  if (store.issueCount) parts.push(`${store.issueCount} in Health`);
-  if (store.context) parts.push(`${store.context} in Context`);
-  if (store.settings) parts.push(`${store.settings} in Settings`);
+  if (store.issueCount) parts.push(`${store.issueCount} to fix in Cleanup`);
+  const environment = (store.context || 0) + (store.settings || 0);
+  if (environment) parts.push(`${environment} in Environment`);
   if (store.kind === 'auto' && store.resolvedBy === 'unresolved') {
     parts.push('Real path could not be resolved - showing the raw folder name');
   }

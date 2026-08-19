@@ -2,62 +2,119 @@ import * as ui from '/ui.mjs';
 import { el, node } from '/dom.mjs';
 import { state, worstSeverity } from '/state.mjs';
 import { paint } from '/bus.mjs';
+import { buildWorklist } from '/views/worklist.mjs';
 import { openRememberPathDialog, forgetProjectPath } from '/dialogs/remember-path.mjs';
 
-const TABS = [
-  { id: 'memories', label: 'Memories' },
-  { id: 'index', label: 'MEMORY.md' },
-  { id: 'graph', label: 'Graph' },
-  { id: 'prune', label: 'Prune' },
-  { id: 'context', label: 'Context' },
-  { id: 'sessions', label: 'Sessions' },
-  { id: 'health', label: 'Health' },
-  { id: 'settings', label: 'Settings' },
-  { id: 'trash', label: 'Trash' },
+const NAVIGATION = [
+  {
+    id: 'memory',
+    label: 'Memory',
+    segments: [
+      { id: 'list', label: 'List' },
+      { id: 'index', label: 'MEMORY.md' },
+      { id: 'graph', label: 'Graph' },
+    ],
+  },
+  { id: 'cleanup', label: 'Cleanup', segments: [] },
+  {
+    id: 'environment',
+    label: 'Environment',
+    segments: [
+      { id: 'instructions', label: 'Instructions' },
+      { id: 'settings', label: 'Settings' },
+      { id: 'sessions', label: 'Sessions' },
+    ],
+  },
 ];
+
+const hasProjectDir = (store) => (store.kind === 'auto'
+  ? store.resolvedBy !== 'unresolved'
+  : Boolean(store.projectPath));
+
+function segmentVisible(tab, segment, store) {
+  const global = store.kind === 'global';
+  if (tab === 'memory') {
+    if (global) return false;
+    return segment === 'index' ? Boolean(store.hasIndex) : true;
+  }
+  if (segment === 'instructions') return global || hasProjectDir(store);
+  if (global) return false;
+  if (segment === 'sessions') return Boolean(store.sessions?.count);
+  return true;
+}
+
+function segmentBadge(id) {
+  if (id === 'instructions') {
+    const problems = state.aux.instructions?.problems || [];
+    return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
+  }
+  if (id === 'settings') {
+    const problems = state.aux.settings?.problems || [];
+    return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
+  }
+  if (id === 'sessions') {
+    const sessions = state.store.sessions;
+    return sessions ? { badge: String(sessions.count), tone: sessions.expiringCount ? 'warn' : 'neutral' } : {};
+  }
+  return {};
+}
+
+export function segmentsFor(tab) {
+  const entry = NAVIGATION.find((item) => item.id === tab);
+  if (!entry || !state.store) return [];
+  return entry.segments
+    .filter((segment) => segmentVisible(tab, segment.id, state.store))
+    .map((segment) => ({ ...segment, ...segmentBadge(segment.id) }));
+}
+
+function tabVisible(tab, store) {
+  if (tab === 'cleanup') return store.kind !== 'global';
+  return segmentsFor(tab).length > 0;
+}
+
+function tabBadge(tab, store) {
+  if (tab === 'memory') return { badge: String(store.memories.length), tone: 'neutral' };
+
+  if (tab === 'cleanup') {
+    const count = buildWorklist(store).length;
+    if (!count) return {};
+    const level = store.stats ? store.stats.index.level : 'ok';
+    const bad = level === 'over' || store.health.severity === 'bad';
+    return { badge: String(count), tone: bad ? 'bad' : 'warn' };
+  }
+
+  const problems = [
+    ...(state.aux.instructions?.problems || []),
+    ...(state.aux.settings?.problems || []),
+  ];
+  return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
+}
+
+function undoControl() {
+  const count = state.store.trash?.length || 0;
+  const button = el('undo');
+  button.hidden = state.store.kind === 'global' || !count;
+  button.textContent = '';
+  button.append(
+    document.createTextNode('\u21ba Undo'),
+    node('span', { class: ui.tabBadge('neutral'), text: String(count) }),
+  );
+}
 
 export function renderTabs() {
   const container = el('tabs');
   container.textContent = '';
-  const global = state.store.kind === 'global';
-  const hasProjectDir = state.store.kind === 'auto'
-    ? state.store.resolvedBy !== 'unresolved'
-    : Boolean(state.store.projectPath);
+  undoControl();
 
-  for (const tab of TABS) {
-    if (global && tab.id !== 'context') continue;
-    if (!global && tab.id === 'context' && !hasProjectDir) continue;
-    if (tab.id === 'sessions' && !state.store.sessions?.count) continue;
-    let badge = null;
-    let tone = 'neutral';
-    if (tab.id === 'memories') badge = String(state.store.memories.length);
-    if (tab.id === 'trash' && state.store.trash.length) badge = String(state.store.trash.length);
-    if (tab.id === 'health' && state.store.health.issueCount) {
-      badge = String(state.store.health.issueCount);
-      tone = state.store.health.severity;
-    }
-    if (tab.id === 'prune' && state.store.stats.index.level !== 'ok') {
-      badge = '!';
-      tone = state.store.stats.index.level === 'over' ? 'bad' : 'warn';
-    }
-    if (tab.id === 'sessions' && state.store.sessions) {
-      badge = String(state.store.sessions.count);
-      if (state.store.sessions.expiringCount) tone = 'warn';
-    }
-    if (tab.id === 'context' && state.aux.instructions?.problems.length) {
-      badge = String(state.aux.instructions.problems.length);
-      tone = worstSeverity(state.aux.instructions.problems);
-    }
-    if (tab.id === 'settings' && state.aux.settings?.problems.length) {
-      badge = String(state.aux.settings.problems.length);
-      tone = worstSeverity(state.aux.settings.problems);
-    }
+  for (const entry of NAVIGATION) {
+    if (!tabVisible(entry.id, state.store)) continue;
+    const { badge, tone } = tabBadge(entry.id, state.store);
 
     container.append(node('button', {
-      class: ui.tab(state.tab === tab.id),
-      onclick: () => { state.tab = tab.id; paint('tabs', 'tab'); },
+      class: ui.tab(state.tab === entry.id),
+      onclick: () => { state.tab = entry.id; paint('tabs', 'tab'); },
     }, [
-      document.createTextNode(tab.label),
+      document.createTextNode(entry.label),
       badge ? node('span', { class: ui.tabBadge(tone), text: badge }) : null,
     ]));
   }

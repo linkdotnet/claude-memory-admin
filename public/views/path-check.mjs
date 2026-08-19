@@ -2,6 +2,7 @@ import * as ui from '/ui.mjs';
 import { node } from '/dom.mjs';
 import { api } from '/api.mjs';
 import { state } from '/state.mjs';
+import { isAt } from '/parts.mjs';
 import { paint } from '/bus.mjs';
 import { renderIssue } from '/views/issue.mjs';
 
@@ -23,7 +24,7 @@ async function fetchPathCheck() {
   }
   if (state.storeId !== id) return;
   state.pathCheck = next;
-  if (state.tab === 'health') paint('tab');
+  if (isAt('cleanup')) paint('tab');
 }
 
 function startPathCheck({ remember = true } = {}) {

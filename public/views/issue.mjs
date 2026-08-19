@@ -3,10 +3,11 @@ import { node } from '/dom.mjs';
 import { confirmDialog } from '/dialog.mjs';
 import { api, toast } from '/api.mjs';
 import { state } from '/state.mjs';
-import { issue, goToTab } from '/parts.mjs';
+import { issue, goTo } from '/parts.mjs';
 import { openStore, selectMemory, restoreFromTrash } from '/store.mjs';
 import { openDeleteDialog } from '/dialogs/delete.mjs';
 import { openAddEntryDialog } from '/dialogs/add-entry.mjs';
+import { openHookEditor } from '/dialogs/hook-editor.mjs';
 
 async function removeIndexLine(lineIndex, expectedText, done) {
   const go = await confirmDialog({
@@ -138,17 +139,6 @@ export function renderIssue(item, memories) {
     );
   }
 
-  if (item.kind === 'long-hooks') {
-    return issue(
-      `${item.count} index hook${item.count === 1 ? '' : 's'} over 200 characters`,
-      `longest is ${item.longest.hookLength} chars on "${item.longest.title}" - hooks load every session, so these are the cheapest thing to trim.`,
-      {
-        bad,
-        action: { label: 'Open Prune', run: () => goToTab('prune') },
-      },
-    );
-  }
-
   if (item.kind === 'duplicate-name') {
     return issue(
       `Two memories claim the name "${item.name}"`,
@@ -205,22 +195,24 @@ export function renderIssue(item, memories) {
   }
 
   if (item.kind === 'hook-repeats-description') {
-    return issue(
+    const row = issue(
       `Hook repeats the description: ${item.file}`,
       `MEMORY.md line ${item.index + 1} - ${item.hookLength} characters restating what the file's own description already says. Only the hook loads every session.`,
-      {
-        bad,
-        secondary: { label: 'Open', run: () => selectMemory(item.file) },
-        action: { label: 'Open Prune', run: () => goToTab('prune') },
-      },
+      { bad, secondary: { label: 'Open', run: () => selectMemory(item.file) } },
     );
+    row.append(node('button', {
+      class: ui.buttonPrimarySmall,
+      text: 'Edit hook',
+      onclick: () => openHookEditor(row, item.index),
+    }));
+    return row;
   }
 
   if (item.kind === 'empty-section') {
     return issue(
       `Empty section in MEMORY.md: "${item.section}"`,
       `line ${item.index + 1} - the heading has no entries under it, and headings count against the 200-line budget too.`,
-      { bad, action: { label: 'Open MEMORY.md', run: () => goToTab('index') } },
+      { bad, action: { label: 'Open MEMORY.md', run: () => goTo('memory', 'index') } },
     );
   }
 
@@ -236,7 +228,7 @@ export function renderIssue(item, memories) {
     return issue(
       `${item.count} index ${item.count === 1 ? 'entry spills' : 'entries spill'} onto extra lines`,
       `${item.extraLines} extra line${item.extraLines === 1 ? '' : 's'} of the 200-line budget - the guidance is one line per entry, with the detail in the topic file.`,
-      { bad, action: { label: 'Open MEMORY.md', run: () => goToTab('index') } },
+      { bad, action: { label: 'Open MEMORY.md', run: () => goTo('memory', 'index') } },
     );
   }
 

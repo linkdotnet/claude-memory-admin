@@ -3,6 +3,7 @@ import { node } from '/dom.mjs';
 import { renderMarkdown } from '/markdown.mjs';
 import { api } from '/api.mjs';
 import { state } from '/state.mjs';
+import { isAt } from '/parts.mjs';
 
 const SCOPE_ORDER = ['managed', 'user', 'project', 'local'];
 
@@ -30,7 +31,7 @@ export async function renderContext(container) {
       container.textContent = '';
       return container.append(node('p', { class: ui.note, text: err.message }));
     }
-    if (state.tab !== 'context') return;
+    if (!isAt('environment', 'instructions')) return;
   }
   container.textContent = '';
 

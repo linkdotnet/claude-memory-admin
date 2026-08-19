@@ -1,6 +1,6 @@
 import * as ui from '/ui.mjs';
 import { node } from '/dom.mjs';
-import { state } from '/state.mjs';
+import { state, SEGMENT_STORAGE } from '/state.mjs';
 import { paint } from '/bus.mjs';
 
 export function issue(title, detail, { bad = false, action, secondary } = {}) {
@@ -14,10 +14,17 @@ export function issue(title, detail, { bad = false, action, secondary } = {}) {
   ]);
 }
 
-export function goToTab(id) {
-  state.tab = id;
+export function goTo(tab, segment) {
+  state.tab = tab;
+  if (segment && SEGMENT_STORAGE[tab]) {
+    state.segment[tab] = segment;
+    localStorage.setItem(SEGMENT_STORAGE[tab], segment);
+  }
   paint('tabs', 'tab');
 }
+
+export const isAt = (tab, segment) => state.tab === tab
+  && (!segment || state.segment[tab] === segment);
 
 export function cutMarker(cutoff) {
   return node('div', { class: ui.cutLine }, [
