@@ -10,6 +10,7 @@ const state = {
   selected: null,
   showAll: false,
   collapsed: localStorage.getItem('sidebarCollapsed') === '1',
+  theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
   spread: Number(localStorage.getItem('graphSpread')) || 1.6,
   query: '',
   search: null,
@@ -1833,6 +1834,26 @@ function applyCollapsed() {
   localStorage.setItem('sidebarCollapsed', state.collapsed ? '1' : '0');
 }
 
+function paintTheme() {
+  document.documentElement.dataset.theme = state.theme;
+  const dark = state.theme === 'dark';
+  const button = el('theme-toggle');
+  button.textContent = dark ? '\u2600' : '\u263E';
+  button.title = dark ? 'Switch to the light theme  ( t )' : 'Switch to the dark theme  ( t )';
+  button.setAttribute('aria-label', dark ? 'Switch to the light theme' : 'Switch to the dark theme');
+  button.setAttribute('aria-pressed', String(dark));
+}
+
+function setTheme(value) {
+  state.theme = value;
+  localStorage.setItem('theme', value);
+  paintTheme();
+}
+
+function toggleTheme() {
+  setTheme(state.theme === 'dark' ? 'light' : 'dark');
+}
+
 function setCollapsed(value) {
   state.collapsed = value;
   applyCollapsed();
@@ -1857,6 +1878,13 @@ async function init() {
   el('collapse').addEventListener('click', () => setCollapsed(true));
   el('expand').addEventListener('click', () => setCollapsed(false));
   el('delete-project').addEventListener('click', openStoreDeleteDialog);
+  el('theme-toggle').addEventListener('click', toggleTheme);
+  const scheme = matchMedia('(prefers-color-scheme: dark)');
+  scheme.addEventListener('change', (event) => {
+    if (localStorage.getItem('theme')) return;
+    state.theme = event.matches ? 'dark' : 'light';
+    paintTheme();
+  });
   document.addEventListener('keydown', (event) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
     if (event.key === '/' && !typing) {
@@ -1866,6 +1894,11 @@ async function init() {
       el('search').select();
       return;
     }
+    if (event.key === 't' && !typing) {
+      event.preventDefault();
+      toggleTheme();
+      return;
+    }
     if (event.key === 'Escape') {
       if (el('modal-root').firstChild) closeModal();
       else if (state.search !== null) clearSearch();
@@ -1873,6 +1906,7 @@ async function init() {
     }
   });
   applyCollapsed();
+  paintTheme();
 
   try {
     const data = await reloadStores();

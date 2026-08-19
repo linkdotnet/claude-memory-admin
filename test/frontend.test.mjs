@@ -60,3 +60,12 @@ test('index.html role hooks all resolve to a ui export', async () => {
   const unknown = [...new Set(roles)].filter((role) => typeof ui[role] !== 'string');
   assert.deepEqual(unknown, [], `index.html references unknown ui exports: ${unknown}`);
 });
+
+test('the theme boot script and the runtime share one storage key', () => {
+  const html = read('public/index.html');
+  const app = read('public/app.mjs');
+  assert.match(html, /localStorage\.getItem\('theme'\)/);
+  assert.match(html, /prefers-color-scheme: dark/);
+  assert.match(app, /localStorage\.setItem\('theme', value\)/);
+  assert.match(app, /localStorage\.getItem\('theme'\)/);
+});

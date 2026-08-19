@@ -21,6 +21,8 @@ export const sidebarGroup = 'px-2 pt-3 pb-1 font-mono text-2xs font-semibold upp
 export const sidebarFoot = 'border-t border-line p-4';
 export const sidebarCredit = 'flex flex-col gap-1.5 text-2xs text-fg-subtle no-underline transition-colors hover:text-fg';
 export const sidebarLogo = 'w-24 opacity-60 transition-opacity dark:invert';
+export const sidebarFootRow = 'flex items-end justify-between gap-3';
+export const themeToggle = cx('inline-flex flex-none cursor-pointer items-center justify-center rounded-md border border-line bg-surface font-sans text-base leading-none text-fg-muted transition-colors hover:border-line-strong hover:text-fg', 'min-w-control-h-sm', controlPad.sm);
 
 export const toggleLabel = 'flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted';
 export const checkbox = 'accent-accent';
