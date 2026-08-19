@@ -1,16 +1,17 @@
 // Structural assertions, run against the committed fixture so they hold on CI,
 // and against the real store as an extra guard when it is present.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import { buildProject } from '../src/model.mjs';
 import { listProjects } from '../src/projects.mjs';
 import { allRoots, FIXTURE_ROOT, FIXTURE_SLUG, hasRealStore, REAL_ROOT } from './helpers.mjs';
 
-const KINDS = new Set([
-  'dangling-index', 'dangling-wikilink', 'orphan',
-  'referenced-only', 'name-mismatch', 'missing-frontmatter', 'long-hooks',
-]);
+const KINDS = new Set(
+  [...fs.readFileSync(new URL('../public/app.mjs', import.meta.url), 'utf8')
+    .matchAll(/item\.kind === '([a-z-]+)'/g)].map((match) => match[1]),
+);
 
 test('slugs resolve to real paths, or admit that they did not', () => {
   for (const root of allRoots) {
@@ -85,6 +86,27 @@ test('the health badge count always matches the number of rendered issues', () =
       }
     }
   }
+});
+
+test('every check reaches health.issues, and severity follows the worst of them', () => {
+  const { health } = buildProject(FIXTURE_ROOT, '-Users-demo-repos-messy');
+  const kinds = new Set(health.issues.map((item) => item.kind));
+
+  for (const kind of [
+    'duplicate-name', 'duplicate-index-entry', 'missing-description', 'unknown-type',
+    'empty-body', 'hook-repeats-description', 'empty-section', 'index-continuation',
+  ]) {
+    assert.ok(kinds.has(kind), `${kind} never reached health.issues`);
+  }
+
+  assert.equal(health.severity, 'bad');
+  assert.equal(health.issues[0].severity, 'bad', 'bad issues sort ahead of warnings');
+});
+
+test('a store with nothing wrong reports an ok severity and no issues', () => {
+  const { health } = buildProject(FIXTURE_ROOT, '-Users-demo-repos-hyphen');
+  assert.equal(health.issueCount, 0);
+  assert.equal(health.severity, 'ok');
 });
 
 test('long hooks are surfaced as exactly one aggregated issue', () => {

@@ -15,6 +15,7 @@ import { parseIndex, parseFrontmatter, extractWikilinks } from './parse.mjs';
 import { listMemoryFiles, memoryDir, resolveProjectPath, shortLabel } from './projects.mjs';
 import { autoMemoryState } from './settings.mjs';
 import { ageInDays, estimateTokens, findDuplicates, indexStats } from './stats.mjs';
+import { memoryChecks } from './checks.mjs';
 
 export const TRASH_DIR = '.trash';
 
@@ -173,8 +174,13 @@ export function buildStore(store) {
     ...(health.longHooks.length
       ? [{ kind: 'long-hooks', severity: 'warn', count: health.longHooks.length, longest: health.longHooks[0] }]
       : []),
+    ...memoryChecks(memories, index),
   ];
+  health.issues.sort((a, b) => (a.severity === 'bad' ? 0 : 1) - (b.severity === 'bad' ? 0 : 1));
   health.issueCount = health.issues.length;
+  health.severity = health.issues.some((item) => item.severity === 'bad')
+    ? 'bad'
+    : health.issues.length ? 'warn' : 'ok';
 
   return {
     ...store,

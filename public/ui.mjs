@@ -44,7 +44,7 @@ export const storeCount = 'font-mono text-2xs text-fg-subtle';
 export const storePath = 'block truncate font-mono text-2xs text-fg-subtle';
 
 const dotBase = 'inline-block size-1.5 flex-none rounded-full';
-const dotTone = { ok: 'bg-ok', warn: 'bg-warn', none: 'bg-line-strong' };
+const dotTone = { ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', none: 'bg-line-strong' };
 export const dot = (tone) => cx(dotBase, pick(dotTone, tone, 'none'));
 
 export const offMarker = 'rounded-sm bg-warn-surface px-1 py-px font-mono text-2xs uppercase tracking-widest text-warn';
@@ -75,6 +75,7 @@ const badgeBase = 'flex-none rounded-sm px-1.5 py-px font-mono text-2xs lowercas
 const badgeTone = {
   neutral: 'bg-surface-sunken text-fg-muted',
   warn: 'bg-warn-surface text-warn',
+  bad: 'bg-danger-surface text-danger',
   ok: 'bg-ok-surface text-ok',
   project: 'bg-type-project-surface text-type-project',
   feedback: 'bg-type-feedback-surface text-type-feedback',
@@ -90,7 +91,7 @@ export const badge = (tone = 'neutral') => cx(badgeBase, pick(badgeTone, tone, '
 const SCOPE_TONE = { managed: 'managed', user: 'scopeUser', project: 'scopeProject', local: 'scopeLocal' };
 export const scopeBadge = (scope) => badge(SCOPE_TONE[scope] ?? 'neutral');
 export const typeBadge = (type) => badge(badgeTone[type] ? type : 'neutral');
-export const tabBadge = (warn) => cx('ml-1.5', badge(warn ? 'warn' : 'neutral'));
+export const tabBadge = (tone = 'neutral') => cx('ml-1.5', badge(tone));
 
 export const split = 'grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(280px,380px)_1fr]';
 export const detailPane = 'xl:sticky xl:top-4 xl:max-h-[calc(100vh-9rem)] xl:overflow-y-auto';

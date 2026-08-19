@@ -97,8 +97,17 @@ project is to the cliff, and makes it quick to get back under it.
 - **Graph** the wikilinks between memories. Hovering dims everything that is not
   a neighbour, which is the only practical way to read a dense cluster.
 - **Health**: orphans, dangling pointers, broken wikilinks, files linked only
-  mid-sentence, `name` fields that disagree with the filename. An orphan can be
-  given the `MEMORY.md` bullet it is missing without leaving the page.
+  mid-sentence, `name` fields that disagree with the filename, two files claiming
+  one `name`, a file bulleted twice, a blank `description`, a `type` outside the
+  four documented ones, a memory that is frontmatter and little else, a hook that
+  only restates the description it points at, a heading with nothing under it, and
+  entries that spill onto a second line. An orphan can be given the `MEMORY.md`
+  bullet it is missing without leaving the page.
+- **Every count is visible before you click.** Each tab carries a badge, coloured
+  amber for something to tidy and red for something actively broken, and the
+  sidebar gives each store a dot of its worst severity - memory, instructions and
+  settings together. Which project is in trouble is the first thing the app tells
+  you, not something you find by opening eight tabs each.
 - **Dates you can trust.** Claude Code stamps `modified` into frontmatter, but
   only on files that already have some, and never adds frontmatter to a file
   without it. Anything falling back to the file's mtime is labelled, because
@@ -178,6 +187,11 @@ It also finds the failures that leave a file silently doing nothing:
 - A markdown file sitting in `~/.claude` that nothing in the chain reaches. It
   looks load-bearing and loads nothing, which is what happens when the import
   that pulled it in is deleted or its content is inlined.
+- One file reached by two chains - your `~/.claude/CLAUDE.md` and the project's
+  own both importing it, say. Both copies load, and you pay for the content twice
+  every session.
+- A `CLAUDE.md` or rule file that is empty apart from its frontmatter. It costs a
+  read and contributes no instruction.
 
 Backticks are respected, so a `` `@README` `` in your prose is not reported as an
 import, and neither is an email address.
@@ -199,6 +213,26 @@ graph or trash. Search does not reach into it.
 This is re-derived from the documented resolution rules rather than reported by
 Claude Code, and the tab says so. Run `/context` in a session for the ground
 truth, or the `InstructionsLoaded` hook to log exactly what loaded and why.
+
+## The one check that reads your code
+
+Every check above reads `memory/` and the `CLAUDE.md` chain, and nothing else.
+One more is available and **off by default**, because it reads the project itself:
+it takes the paths a memory names in a code span and asks whether anything in the
+repository still matches them. A memory whose `Foo.cs` was renamed two months ago
+still reads as authoritative, and nothing else on this page can tell.
+
+Turn it on from the Health tab, per store; the choice is remembered in the browser
+and nothing is written to disk. It walks the project once, skipping `.git`,
+`node_modules`, build output and the like, and matches by suffix - a memory that
+says `Infrastructure/Reporting/Foo.cs` for a file that really lives under
+`services/argus/src` is right, and resolving that against the repository root
+alone reported seven real paths in ten as missing. Only a token with a real source
+extension is treated as a claim about a file, because memories are also full of
+HTTP routes and type names that no file was ever going to match.
+
+It is a pointer, not a verdict, and the tab says so: a file that moved reads the
+same as one the memory never got right.
 
 ## Which settings are actually in force
 
@@ -274,6 +308,10 @@ claude-memory-admin --root /tmp/memory-snapshot
 ## Safety
 
 - Binds `127.0.0.1`; no telemetry, no network calls.
+- Reads only `~/.claude/projects`, the agent memory directories and the `CLAUDE.md`
+  chain, unless you switch on the path check above, which then also walks that one
+  project's directory. It only ever reads: no path a memory names is opened, only
+  looked up in an index built from the project itself.
 - Every write target must resolve to a plain `.md` file inside that project's own
   `memory/` directory. `..`, absolute paths and subdirectories are refused.
 - One exception, and only when you ask for it: **Remember path** writes
@@ -320,6 +358,8 @@ ready to serve and never builds anything. After editing the source, run
 | `src/stores.mjs` | Store discovery: the user scope, auto memory and the three agent scopes |
 | `src/instructions.mjs` | CLAUDE.md chain, `@` imports and rules resolution |
 | `src/parse.mjs` | `MEMORY.md` and frontmatter parsers, wikilinks |
+| `src/checks.mjs` | The consistency checks, as pure functions over parsed data |
+| `src/pathcheck.mjs` | The opt-in check of paths a memory names, against the repo |
 | `src/model.mjs` | Joins index, files, graph and health into one model |
 | `src/stats.mjs` | Load-limit accounting and overlap detection |
 | `src/search.mjs` | Full-text search across every store |

@@ -1,4 +1,4 @@
 # Review patterns
 
-- [Naming drift](naming-drift.md) — the same concept under three names across packages
-- [Test gaps](test-gaps.md) — which layers reviewers keep finding untested
+- [Naming drift](naming-drift.md) — check this one first, it recurs
+- [Test gaps](test-gaps.md) — integration boundaries, not unit coverage

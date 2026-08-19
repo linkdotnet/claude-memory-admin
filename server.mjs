@@ -10,11 +10,12 @@ import { spawn } from 'node:child_process';
 
 import { projectsRoot, resolveRoot } from './src/projects.mjs';
 import { buildStore } from './src/model.mjs';
-import { resolveGlobalInstructions, resolveInstructions } from './src/instructions.mjs';
-import { settingsReport } from './src/settings.mjs';
+import { resolveGlobalInstructions, resolveInstructions, summarise } from './src/instructions.mjs';
+import { settingsReport, summariseSettings } from './src/settings.mjs';
 import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
+import { verifyPaths } from './src/pathcheck.mjs';
 import {
   addIndexEntry,
   addIndexEntryPreview,
@@ -153,11 +154,54 @@ function emptyModel(store) {
     index: null,
     memories: [],
     graph: { nodes: [], edges: [], dangling: [] },
-    health: { orphans: [], referencedOnly: [], danglingIndex: [], danglingWikilinks: [], nameMismatches: [], missingFrontmatter: [], longHooks: [], issues: [], issueCount: 0 },
+    health: { orphans: [], referencedOnly: [], danglingIndex: [], danglingWikilinks: [], nameMismatches: [], missingFrontmatter: [], longHooks: [], issues: [], issueCount: 0, severity: 'ok' },
     stats: null,
     duplicates: [],
     trash: [],
   };
+}
+
+const WORST = { ok: 0, warn: 1, bad: 2 };
+const worst = (...severities) => severities.reduce((a, b) => (WORST[b] > WORST[a] ? b : a), 'ok');
+
+/**
+ * Counts only, for every store at once, so the sidebar can say which project is
+ * in trouble before anything is opened. The full models are an order of
+ * magnitude larger and none of them is needed to draw a dot.
+ */
+function issueSweep() {
+  return listStores(ROOT).map((store) => {
+    const summary = { id: store.id, issueCount: 0, severity: 'ok', context: 0, settings: 0 };
+
+    if (store.kind !== 'global') {
+      try {
+        const { health } = buildStore(store);
+        summary.issueCount = health.issueCount;
+        summary.severity = health.severity;
+      } catch { /* a store that cannot be read has nothing to report */ }
+    }
+
+    const projectDir = storeProjectDir(store);
+    try {
+      const instructions = store.kind === 'global'
+        ? summarise(resolveGlobalInstructions().problems)
+        : projectDir ? summarise(resolveInstructions(projectDir).problems) : null;
+      if (instructions) {
+        summary.context = instructions.count;
+        summary.severity = worst(summary.severity, instructions.severity);
+      }
+    } catch { /* unreadable instruction chain is reported by the tab itself */ }
+
+    if (projectDir) {
+      try {
+        const settings = summariseSettings(settingsReport({ projectDir }).problems);
+        summary.settings = settings.count;
+        summary.severity = worst(summary.severity, settings.severity);
+      } catch { /* likewise */ }
+    }
+
+    return summary;
+  });
 }
 
 async function handleApi(req, res, url) {
@@ -178,6 +222,12 @@ async function handleApi(req, res, url) {
 
   if (segments.length === 2 && segments[1] === 'search' && req.method === 'GET') {
     return sendJson(res, 200, searchAll(ROOT, url.searchParams.get('q') || ''));
+  }
+
+  // Ahead of requireStore, which would otherwise read "issues" as a store id.
+  // Real ids always carry a "kind:" prefix, so the two can never collide.
+  if (segments.length === 3 && segments[1] === 'stores' && segments[2] === 'issues' && req.method === 'GET') {
+    return sendJson(res, 200, { stores: issueSweep() });
   }
 
   if (segments[1] !== 'stores' || segments.length < 3) {
@@ -203,6 +253,18 @@ async function handleApi(req, res, url) {
     const projectDir = storeProjectDir(store);
     if (!projectDir) return sendJson(res, 200, { projectDir: null, files: [], problems: [], excluded: [], totals: null });
     return sendJson(res, 200, resolveInstructions(projectDir));
+  }
+
+  // Opt-in, and the only read this app makes into a project's own tree. Refused
+  // outright when nothing resolved a project directory, so a store can never be
+  // talked into stat-ing a path it has no business knowing about.
+  if (action === 'path-check' && req.method === 'GET') {
+    const projectDir = storeProjectDir(store);
+    if (!projectDir) {
+      return sendJson(res, 400, { error: 'This store is not tied to a project directory, so there is nothing to check paths against.' });
+    }
+    const { memories } = buildStore(store);
+    return sendJson(res, 200, verifyPaths(projectDir, memories));
   }
 
   if (action === 'settings' && req.method === 'GET') {

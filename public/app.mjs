@@ -17,7 +17,13 @@ const state = {
   pruneSort: 'oldest',
   pruneSelection: new Set(),
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
+  aux: { instructions: null, settings: null },
+  pathCheck: null,
 };
+
+const RANK = { ok: 0, warn: 1, bad: 2 };
+const worst = (...severities) => severities.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), 'ok');
+const worstSeverity = (items) => (!items.length ? 'ok' : items.some((item) => item.severity === 'bad') ? 'bad' : 'warn');
 
 const el = (id) => document.getElementById(id);
 
@@ -88,16 +94,25 @@ function storeSubtitle(store) {
   return `${scope} · ${store.sublabel}`;
 }
 
+function issueTitle(store) {
+  const parts = [];
+  if (store.issueCount) parts.push(`${store.issueCount} in Health`);
+  if (store.context) parts.push(`${store.context} in Context`);
+  if (store.settings) parts.push(`${store.settings} in Settings`);
+  if (store.kind === 'auto' && store.resolvedBy === 'unresolved') {
+    parts.push('Real path could not be resolved - showing the raw folder name');
+  }
+  return parts.length ? `${store.dir}\n${parts.join(', ')}` : store.dir;
+}
+
 function storeButton(store) {
   const global = store.kind === 'global';
-  const health = global ? 'ok' : store.memoryCount === 0 ? 'none' : 'ok';
+  const health = !global && !store.hasMemoryDir ? 'none' : store.severity || 'ok';
   const off = store.autoMemory && store.autoMemory.known && !store.autoMemory.enabled;
   return node('button', {
     class: ui.storeItem({ active: store.id === state.storeId, empty: !global && !store.hasMemoryDir }),
     onclick: () => openStore(store.id),
-    title: store.kind === 'auto' && store.resolvedBy === 'unresolved'
-      ? 'Real path could not be resolved - showing the raw folder name'
-      : store.dir,
+    title: issueTitle(store),
   }, [
     node('span', { class: ui.storeRow }, [
       node('span', { class: ui.dot(health) }),
@@ -155,17 +170,32 @@ function renderTabs() {
     if (global && tab.id !== 'context') continue;
     if (!global && tab.id === 'context' && !hasProjectDir) continue;
     let badge = null;
+    let tone = 'neutral';
     if (tab.id === 'memories') badge = String(state.store.memories.length);
-    if (tab.id === 'health' && state.store.health.issueCount) badge = String(state.store.health.issueCount);
     if (tab.id === 'trash' && state.store.trash.length) badge = String(state.store.trash.length);
-    if (tab.id === 'prune' && state.store.stats.index.overTarget) badge = '!';
+    if (tab.id === 'health' && state.store.health.issueCount) {
+      badge = String(state.store.health.issueCount);
+      tone = state.store.health.severity;
+    }
+    if (tab.id === 'prune' && state.store.stats.index.level !== 'ok') {
+      badge = '!';
+      tone = state.store.stats.index.level === 'over' ? 'bad' : 'warn';
+    }
+    if (tab.id === 'context' && state.aux.instructions?.problems.length) {
+      badge = String(state.aux.instructions.problems.length);
+      tone = worstSeverity(state.aux.instructions.problems);
+    }
+    if (tab.id === 'settings' && state.aux.settings?.problems.length) {
+      badge = String(state.aux.settings.problems.length);
+      tone = worstSeverity(state.aux.settings.problems);
+    }
 
     container.append(node('button', {
       class: ui.tab(state.tab === tab.id),
       onclick: () => { state.tab = tab.id; renderTabs(); renderTab(); },
     }, [
       document.createTextNode(tab.label),
-      badge ? node('span', { class: ui.tabBadge(tab.id === 'health' || tab.id === 'prune'), text: badge }) : null,
+      badge ? node('span', { class: ui.tabBadge(tone), text: badge }) : null,
     ]));
   }
 }
@@ -395,18 +425,22 @@ const CONTEXT_PROBLEMS = {
   'long-claude-md': (p) => [`${p.lines} lines, over the 200-line guidance`, `${p.file} - long files cost context every session and reduce adherence`],
   'agents-md-not-imported': (p) => ['AGENTS.md is not loaded', `${p.file} exists, but Claude Code reads CLAUDE.md. Import it with @AGENTS.md, or symlink it.`],
   'unreferenced-user-file': (p) => ['Nothing in the chain reaches this file', `${p.file} sits next to CLAUDE.md and loads nothing. Import it with @${p.file.split('/').pop()}, or delete it.`],
+  'duplicate-load': (p) => [`Loaded ${p.count} times: ${p.file}`, `reached from ${[...new Set(p.via)].join(' and ')} - every copy is read into context, so you pay ~${p.wastedTokens.toLocaleString()} extra tokens a session`],
+  'empty-instruction-file': (p) => ['Loads, but says nothing', `${p.file} is empty apart from its frontmatter, so it costs a read and contributes no instruction`],
 };
 
 async function renderContext(container) {
-  container.append(node('p', { class: ui.note, text: 'Reading instruction files…' }));
-  let data;
-  try {
-    data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/instructions`);
-  } catch (err) {
-    container.textContent = '';
-    return container.append(node('p', { class: ui.note, text: err.message }));
+  let data = state.aux.instructions;
+  if (!data) {
+    container.append(node('p', { class: ui.note, text: 'Reading instruction files…' }));
+    try {
+      data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/instructions`);
+    } catch (err) {
+      container.textContent = '';
+      return container.append(node('p', { class: ui.note, text: err.message }));
+    }
+    if (state.tab !== 'context') return;
   }
-  if (state.tab !== 'context') return;
   container.textContent = '';
 
   const global = state.store.kind === 'global';
@@ -434,8 +468,7 @@ async function renderContext(container) {
     for (const problem of data.problems) {
       const describe = CONTEXT_PROBLEMS[problem.kind];
       const [title, detail] = describe ? describe(problem) : [problem.kind, problem.file || ''];
-      const bad = problem.kind === 'missing' || problem.kind === 'invalid-glob' || problem.kind === 'glob-budget';
-      container.append(node('div', { class: ui.issue(bad) }, [
+      container.append(node('div', { class: ui.issue(problem.severity === 'bad') }, [
         node('div', { class: ui.issueBody }, [
           node('div', { class: ui.issueTitle, text: title }),
           node('div', { class: ui.issueDetail, text: detail }),
@@ -506,18 +539,135 @@ function issue(title, detail, { bad = false, action, secondary } = {}) {
   ]);
 }
 
+function storeHasProjectDir() {
+  return state.store.kind === 'auto'
+    ? state.store.resolvedBy !== 'unresolved'
+    : Boolean(state.store.projectPath);
+}
+
+const pathCheckKey = () => `pathCheck:${state.storeId}`;
+
+async function fetchPathCheck() {
+  const id = state.storeId;
+  let next;
+  try {
+    next = { running: false, data: await api(`/api/stores/${encodeURIComponent(id)}/path-check`) };
+  } catch (err) {
+    next = { running: false, error: err.message };
+  }
+  if (state.storeId !== id) return;
+  state.pathCheck = next;
+  if (state.tab === 'health') renderTab();
+}
+
+function startPathCheck({ remember = true } = {}) {
+  if (remember) localStorage.setItem(pathCheckKey(), '1');
+  state.pathCheck = { running: true };
+  fetchPathCheck();
+}
+
+function runPathCheck() {
+  startPathCheck();
+  renderTab();
+}
+
+function stopPathCheck() {
+  localStorage.removeItem(pathCheckKey());
+  state.pathCheck = null;
+  renderTab();
+}
+
+function renderPathCheck(container) {
+  if (!storeHasProjectDir()) return;
+
+  if (!state.pathCheck && localStorage.getItem(pathCheckKey()) === '1') {
+    startPathCheck({ remember: false });
+  }
+  const check = state.pathCheck;
+
+  const head = node('div', { class: ui.issue(false) });
+  const body = node('div', { class: ui.issueBody });
+
+  if (!check) {
+    body.append(
+      node('div', { class: ui.issueTitle, text: 'Paths named in memories are not being checked' }),
+      node('div', { class: ui.issueDetail, text: 'Every other check on this tab reads only memory/. This one reads the project itself, to find memories naming files that no longer exist. It stays off until you ask, and is remembered per store.' }),
+    );
+    head.append(body, node('button', { class: ui.buttonSmall, text: 'Check against the repo', onclick: () => runPathCheck() }));
+    return container.append(head);
+  }
+
+  if (check.running) {
+    body.append(node('div', { class: ui.issueTitle, text: 'Checking paths against the repo…' }));
+    head.append(body);
+    return container.append(head);
+  }
+
+  if (check.error) {
+    body.append(
+      node('div', { class: ui.issueTitle, text: 'Path check could not run' }),
+      node('div', { class: ui.issueDetail, text: check.error }),
+    );
+    head.append(body, node('button', { class: ui.buttonSmall, text: 'Turn off', onclick: () => stopPathCheck() }));
+    return container.append(head);
+  }
+
+  const { checked, capped, missing, indexed, truncated } = check.data;
+  const scanned = `${indexed.toLocaleString()} files and folders scanned${truncated ? ', stopped at the index limit' : ''}`;
+  body.append(
+    node('div', { class: ui.issueTitle, text: missing.length
+      ? `${missing.length} of ${checked} paths named in memories match no file in the project`
+      : `All ${checked} paths named in memories still match a file` }),
+    node('div', { class: ui.issueDetail, text: capped
+      ? `${scanned}; stopped after the first ${checked} paths, so there may be more`
+      : scanned }),
+  );
+  if (missing.length) {
+    body.append(node('div', { class: ui.issueDetail, text: 'A pointer rather than a verdict: a file that moved reads the same as one the memory never got right.' }));
+  }
+  head.append(
+    body,
+    node('button', { class: ui.buttonSmall, text: 'Turn off', onclick: () => stopPathCheck() }),
+    node('button', { class: ui.buttonSmall, text: 'Re-check', onclick: () => runPathCheck() }),
+  );
+  container.append(head);
+
+  for (const item of missing) container.append(renderIssue(item, state.store.memories));
+}
+
 function renderHealth(container) {
   const { health, memories } = state.store;
+
   if (!health.issues.length) {
     container.append(node('div', { class: ui.card }, [
       node('p', { class: ui.okLine, text: '\u2713 No consistency problems found.' }),
       node('p', { class: ui.noteTight, text: 'Every memory file is referenced by MEMORY.md, every pointer resolves, and every [[wikilink]] finds its target.' }),
     ]));
-    return;
+  } else {
+    for (const item of health.issues) container.append(renderIssue(item, memories));
   }
 
-  for (const item of health.issues) {
-    container.append(renderIssue(item, memories));
+  container.append(node('div', { class: ui.sectionLabel, text: 'Beyond the memory directory' }));
+  renderPathCheck(container);
+}
+
+function goToTab(id) {
+  state.tab = id;
+  renderTabs();
+  renderTab();
+}
+
+async function removeIndexLine(lineIndex, expectedText, done) {
+  if (!confirm(`Remove line ${lineIndex + 1} from MEMORY.md?\n\n${expectedText}`)) return;
+  try {
+    await api(`/api/stores/${encodeURIComponent(state.storeId)}/index-line/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ lineIndex, expectedText }),
+    });
+    toast(done);
+    await openStore(state.storeId, { keepTab: true });
+  } catch (err) {
+    toast(err.message, { error: true });
   }
 }
 
@@ -533,19 +683,7 @@ function renderIssue(item, memories) {
         bad,
         action: {
           label: 'Remove pointer',
-          run: async () => {
-            if (!confirm(`Remove line ${entry.index + 1} from MEMORY.md?\n\n${entry.text}`)) return;
-            try {
-              await api(`/api/stores/${encodeURIComponent(state.storeId)}/index-line/delete`, {
-                method: 'POST',
-                body: JSON.stringify({ lineIndex: entry.index, expectedText: entry.text }),
-              });
-              toast('Pointer removed');
-              await openStore(state.storeId, { keepTab: true });
-            } catch (err) {
-              toast(err.message, { error: true });
-            }
-          },
+          run: () => removeIndexLine(entry.index, entry.text, 'Pointer removed'),
         },
       },
     );
@@ -629,11 +767,99 @@ function renderIssue(item, memories) {
       `longest is ${item.longest.hookLength} chars on "${item.longest.title}" - hooks load every session, so these are the cheapest thing to trim.`,
       {
         bad,
+        action: { label: 'Open Prune', run: () => goToTab('prune') },
+      },
+    );
+  }
+
+  if (item.kind === 'duplicate-name') {
+    return issue(
+      `Two memories claim the name "${item.name}"`,
+      `${item.files.join(', ')} - every [[${item.name}]] resolves to ${item.reachable}, so the other one cannot be linked at all.`,
+      {
+        bad,
+        secondary: { label: 'Open first', run: () => selectMemory(item.files[0]) },
+        action: { label: 'Open second', run: () => selectMemory(item.files[1]) },
+      },
+    );
+  }
+
+  if (item.kind === 'duplicate-index-entry') {
+    return issue(
+      `Listed twice in MEMORY.md: ${item.file}`,
+      `lines ${item.lines.map((line) => line + 1).join(' and ')} - one memory, two index lines, both loaded every session.`,
+      {
+        bad,
         action: {
-          label: 'Open Prune',
-          run: () => { state.tab = 'prune'; renderTabs(); renderTab(); },
+          label: 'Remove duplicate',
+          run: () => removeIndexLine(item.removable.index, item.removable.text, 'Duplicate removed'),
         },
       },
+    );
+  }
+
+  if (item.kind === 'missing-description') {
+    return issue(
+      `No description: ${item.file}`,
+      'The description is what a memory is recalled by, so this one is found on its name alone.',
+      { bad, action: { label: 'Open', run: () => selectMemory(item.file) } },
+    );
+  }
+
+  if (item.kind === 'unknown-type') {
+    return issue(
+      `Unrecognised type: ${item.file}`,
+      `type: "${item.type}" - expected one of user, feedback, project, reference.`,
+      { bad, action: { label: 'Open', run: () => selectMemory(item.file) } },
+    );
+  }
+
+  if (item.kind === 'empty-body') {
+    const memory = memories.find((m) => m.file === item.file);
+    return issue(
+      `Almost nothing in it: ${item.file}`,
+      `"${memory?.name || item.file}" has ${item.chars} characters of body - it costs an index line every session and says nothing.`,
+      {
+        bad,
+        secondary: { label: 'Open', run: () => selectMemory(item.file) },
+        action: { label: 'Delete', run: () => openDeleteDialog(item.file) },
+      },
+    );
+  }
+
+  if (item.kind === 'hook-repeats-description') {
+    return issue(
+      `Hook repeats the description: ${item.file}`,
+      `MEMORY.md line ${item.index + 1} - ${item.hookLength} characters restating what the file's own description already says. Only the hook loads every session.`,
+      {
+        bad,
+        secondary: { label: 'Open', run: () => selectMemory(item.file) },
+        action: { label: 'Open Prune', run: () => goToTab('prune') },
+      },
+    );
+  }
+
+  if (item.kind === 'empty-section') {
+    return issue(
+      `Empty section in MEMORY.md: "${item.section}"`,
+      `line ${item.index + 1} - the heading has no entries under it, and headings count against the 200-line budget too.`,
+      { bad, action: { label: 'Open MEMORY.md', run: () => goToTab('index') } },
+    );
+  }
+
+  if (item.kind === 'stale-path') {
+    return issue(
+      `No file matches ${item.token}`,
+      `named by "${item.name || item.file}"`,
+      { bad, action: { label: 'Open', run: () => selectMemory(item.file) } },
+    );
+  }
+
+  if (item.kind === 'index-continuation') {
+    return issue(
+      `${item.count} index ${item.count === 1 ? 'entry spills' : 'entries spill'} onto extra lines`,
+      `${item.extraLines} extra line${item.extraLines === 1 ? '' : 's'} of the 200-line budget - the guidance is one line per entry, with the detail in the topic file.`,
+      { bad, action: { label: 'Open MEMORY.md', run: () => goToTab('index') } },
     );
   }
 
@@ -662,15 +888,17 @@ const SETTINGS_PROBLEMS = {
 const show = (value) => (value === undefined ? 'unset' : JSON.stringify(value));
 
 async function renderSettings(container) {
-  container.append(node('p', { class: ui.note, text: 'Reading settings files…' }));
-  let data;
-  try {
-    data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/settings`);
-  } catch (err) {
-    container.textContent = '';
-    return container.append(node('p', { class: ui.note, text: err.message }));
+  let data = state.aux.settings;
+  if (!data) {
+    container.append(node('p', { class: ui.note, text: 'Reading settings files…' }));
+    try {
+      data = await api(`/api/stores/${encodeURIComponent(state.storeId)}/settings`);
+    } catch (err) {
+      container.textContent = '';
+      return container.append(node('p', { class: ui.note, text: err.message }));
+    }
+    if (state.tab !== 'settings') return;
   }
-  if (state.tab !== 'settings') return;
   container.textContent = '';
 
   container.append(node('p', { class: ui.noteTight, text: 'What Claude Code would read for this store, in precedence order: managed policy first, then project and local settings, then your user file. This tab is read-only — it reports what is configured, it never changes it.' }));
@@ -684,7 +912,7 @@ async function renderSettings(container) {
     for (const problem of data.problems) {
       const describe = SETTINGS_PROBLEMS[problem.kind];
       const [title, detail] = describe ? describe(problem) : [problem.kind, problem.file || ''];
-      container.append(node('div', { class: ui.issue(true) }, [
+      container.append(node('div', { class: ui.issue(problem.severity === 'bad') }, [
         node('div', { class: ui.issueBody }, [
           node('div', { class: ui.issueTitle, text: title }),
           node('div', { class: ui.issueDetail, text: detail }),
@@ -1743,7 +1971,20 @@ async function reloadStores() {
   const data = await api('/api/stores');
   state.stores = data.stores;
   renderStores();
+  sweepIssues();
   return data;
+}
+
+async function sweepIssues() {
+  let data;
+  try {
+    data = await api('/api/stores/issues');
+  } catch {
+    return;
+  }
+  const bySummary = new Map(data.stores.map((summary) => [summary.id, summary]));
+  for (const store of state.stores) Object.assign(store, bySummary.get(store.id) || {});
+  renderStores();
 }
 
 function renderStoreHeader() {
@@ -1799,6 +2040,8 @@ function renderStoreHeader() {
 async function openStore(id, { keepTab = false } = {}) {
   if (id !== state.storeId) state.pruneSelection.clear();
   state.storeId = id;
+  state.aux = { instructions: null, settings: null };
+  state.pathCheck = null;
   if (!keepTab) {
     const opening = state.stores.find((store) => store.id === id);
     state.tab = opening && opening.kind === 'global' ? 'context' : 'memories';
@@ -1819,12 +2062,34 @@ async function openStore(id, { keepTab = false } = {}) {
   renderStoreHeader();
 
   const listed = state.stores.find((store) => store.id === id);
-  if (listed) listed.memoryCount = state.store.memories.length;
+  if (listed) {
+    listed.memoryCount = state.store.memories.length;
+    listed.issueCount = state.store.health.issueCount;
+    listed.severity = worst(state.store.health.severity, listed.context ? 'warn' : 'ok', listed.settings ? 'warn' : 'ok');
+  }
   renderStores();
 
   renderView();
   renderTabs();
   renderTab();
+
+  Promise.all([
+    api(`/api/stores/${encodeURIComponent(id)}/instructions`).catch(() => null),
+    api(`/api/stores/${encodeURIComponent(id)}/settings`).catch(() => null),
+  ]).then(([instructions, settings]) => {
+    if (state.storeId !== id) return;
+    state.aux = { instructions, settings };
+    renderTabs();
+    if (!listed) return;
+    listed.context = instructions ? instructions.problems.length : 0;
+    listed.settings = settings ? settings.problems.length : 0;
+    listed.severity = worst(
+      state.store.health.severity,
+      instructions ? worstSeverity(instructions.problems) : 'ok',
+      settings ? worstSeverity(settings.problems) : 'ok',
+    );
+    renderStores();
+  });
 }
 
 function applyCollapsed() {

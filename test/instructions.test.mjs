@@ -88,6 +88,34 @@ test('a missing import is reported rather than passed over', () => {
   assert.deepEqual(problems.map((p) => p.kind), ['missing']);
 });
 
+test('a file two chains both reach is reported as loaded twice', () => {
+  const { problems, files } = resolveInstructions(path.join(FIXTURES, 'duplicate'));
+  const duplicate = problems.find((p) => p.kind === 'duplicate-load');
+
+  assert.ok(duplicate, 'shared.md is imported by both CLAUDE.md files');
+  assert.equal(path.basename(duplicate.file), 'shared.md');
+  assert.equal(duplicate.count, 2);
+  assert.ok(duplicate.wastedTokens > 0);
+  assert.equal(files.filter((f) => path.basename(f.file) === 'shared.md').length, 2);
+});
+
+test('a rule that is nothing but frontmatter is named as loading nothing', () => {
+  const { problems } = resolveInstructions(path.join(FIXTURES, 'duplicate'));
+  const empty = problems.filter((p) => p.kind === 'empty-instruction-file').map((p) => path.basename(p.file));
+  assert.deepEqual(empty, ['blank.md']);
+});
+
+test('every instruction problem carries a severity the UI can colour', () => {
+  for (const dir of [PROJECT, path.join(FIXTURES, 'duplicate'), path.join(FIXTURES, 'cycle')]) {
+    for (const problem of resolveInstructions(dir).problems) {
+      assert.ok(['warn', 'bad'].includes(problem.severity), `${problem.kind} has severity ${problem.severity}`);
+    }
+  }
+  const bad = resolveInstructions(PROJECT).problems.findIndex((p) => p.severity === 'bad');
+  const warn = resolveInstructions(PROJECT).problems.findIndex((p) => p.severity === 'warn');
+  if (bad !== -1 && warn !== -1) assert.ok(bad < warn, 'bad problems sort ahead of warnings');
+});
+
 test('a cycle is named once and not followed', () => {
   const dir = path.join(FIXTURES, 'cycle');
   const resolved = resolveInstructions(dir);

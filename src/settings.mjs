@@ -19,6 +19,21 @@ export const USER_SETTINGS = path.join(os.homedir(), '.claude', 'settings.json')
 /** Default when nothing sets cleanupPeriodDays; transcripts older than this are swept. */
 export const DEFAULT_CLEANUP_PERIOD_DAYS = 30;
 
+export const SETTINGS_SEVERITY = {
+  unparseable: 'bad',
+  unreadable: 'bad',
+  'not-object': 'bad',
+  'invalid-auto-memory-directory': 'bad',
+};
+
+export function summariseSettings(problems) {
+  const list = problems || [];
+  return {
+    count: list.length,
+    severity: list.some((problem) => problem.severity === 'bad') ? 'bad' : list.length ? 'warn' : 'ok',
+  };
+}
+
 function managedDir() {
   if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode';
   if (process.platform === 'win32') return 'C:\\Program Files\\ClaudeCode';
@@ -226,12 +241,19 @@ export function settingsReport(options = {}) {
 
   const problems = layers
     .filter((layer) => layer.status !== 'ok' && layer.status !== 'absent')
-    .map((layer) => ({ kind: layer.status, scope: layer.scope, file: layer.file, detail: layer.error }));
+    .map((layer) => ({
+      kind: layer.status,
+      severity: SETTINGS_SEVERITY[layer.status] || 'warn',
+      scope: layer.scope,
+      file: layer.file,
+      detail: layer.error,
+    }));
 
   const directory = resolveMemoryDirectory(options);
   if (directory && directory.invalid) {
     problems.push({
       kind: 'invalid-auto-memory-directory',
+      severity: SETTINGS_SEVERITY['invalid-auto-memory-directory'],
       scope: directory.scope,
       file: directory.file,
       detail: `"${directory.raw}" is ${directory.invalid}`,

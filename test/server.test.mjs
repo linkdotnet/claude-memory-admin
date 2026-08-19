@@ -35,6 +35,55 @@ test('every other kind of store is left writable', () => {
   }
 });
 
+test('the issue sweep counts every store without shipping any of their models', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    const sweep = await (await fetch(`${base}/api/stores/issues`)).json();
+
+    assert.deepEqual(
+      sweep.stores.map((s) => s.id).sort(),
+      listing.stores.map((s) => s.id).sort(),
+      'every listed store gets a dot',
+    );
+
+    for (const summary of sweep.stores) {
+      assert.ok(['ok', 'warn', 'bad'].includes(summary.severity));
+      assert.equal(typeof summary.issueCount, 'number');
+      assert.ok(!('memories' in summary) && !('health' in summary), 'counts only, never the model');
+    }
+
+    const messy = listing.stores.find((s) => s.slug === '-Users-demo-repos-messy');
+    const model = await (await fetch(`${base}/api/stores/${encodeURIComponent(messy.id)}`)).json();
+    const summary = sweep.stores.find((s) => s.id === messy.id);
+    assert.equal(summary.issueCount, model.health.issueCount, 'the dot and the badge count the same issues');
+    assert.equal(summary.severity, 'bad');
+  } finally {
+    server.close();
+  }
+});
+
+test('a store with no project directory refuses the path check instead of guessing one', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    const unresolved = listing.stores.find((s) => s.kind === 'auto' && s.resolvedBy === 'unresolved');
+    if (!unresolved) return;
+
+    const response = await fetch(`${base}/api/stores/${encodeURIComponent(unresolved.id)}/path-check`);
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /not tied to a project directory/);
+  } finally {
+    server.close();
+  }
+});
+
 test('the global store answers the read endpoints and holds no memory', async () => {
   const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
   await new Promise((resolve) => server.once('listening', resolve));

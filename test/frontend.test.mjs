@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildProject } from '../src/model.mjs';
+import { FIXTURE_ROOT } from './helpers.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
@@ -59,6 +62,27 @@ test('index.html role hooks all resolve to a ui export', async () => {
   assert.ok(roles.length > 0);
   const unknown = [...new Set(roles)].filter((role) => typeof ui[role] !== 'string');
   assert.deepEqual(unknown, [], `index.html references unknown ui exports: ${unknown}`);
+});
+
+test('every model field the tab strip reads is one the model actually produces', () => {
+  const app = read('public/app.mjs');
+  const overflow = buildProject(FIXTURE_ROOT, '-Users-demo-repos-overflow');
+
+  const reads = (prefix, object) => {
+    const pattern = new RegExp(`${prefix.replace(/\./g, '\\.')}\\.([A-Za-z_$][\\w$]*)`, 'g');
+    const used = new Set([...app.matchAll(pattern)].map((m) => m[1]));
+    const missing = [...used].filter((key) => !(key in object));
+    assert.deepEqual(missing, [], `${prefix} reads fields nothing sets: ${missing}`);
+  };
+
+  reads('state.store.stats.index', overflow.stats.index);
+  reads('state.store.health', overflow.health);
+});
+
+test('an index past the load limit is one the tab strip can warn about', () => {
+  const { stats } = buildProject(FIXTURE_ROOT, '-Users-demo-repos-overflow');
+  assert.equal(stats.index.level, 'over', 'the fixture exists to be over the limit');
+  assert.match(read('public/app.mjs'), /stats\.index\.level/);
 });
 
 test('the theme boot script and the runtime share one storage key', () => {

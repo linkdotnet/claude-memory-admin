@@ -18,6 +18,7 @@ import path from 'node:path';
 import { parseFrontmatter } from './parse.mjs';
 import { estimateTokens } from './stats.mjs';
 import { lookup, settingsLayers } from './settings.mjs';
+import { instructionChecks } from './checks.mjs';
 
 /** Claude Code's own guidance for a CLAUDE.md. Guidance, not a cutoff. */
 export const CLAUDE_MD_TARGET_LINES = 200;
@@ -27,6 +28,38 @@ export const MAX_IMPORT_DEPTH = 4;
 
 /** A rule's whole `paths:` list shares this budget of expanded patterns. */
 export const BRACE_PATTERN_BUDGET = 1000;
+
+export const INSTRUCTION_SEVERITY = {
+  missing: 'bad',
+  'invalid-glob': 'bad',
+  'glob-budget': 'bad',
+  cycle: 'warn',
+  'too-deep': 'warn',
+  external: 'warn',
+  'long-claude-md': 'warn',
+  'agents-md-not-imported': 'warn',
+  'unreferenced-user-file': 'warn',
+  'duplicate-load': 'warn',
+  'empty-instruction-file': 'warn',
+};
+
+export function summarise(problems) {
+  const list = problems || [];
+  return {
+    count: list.length,
+    severity: list.some((problem) => INSTRUCTION_SEVERITY[problem.kind] === 'bad')
+      ? 'bad'
+      : list.length ? 'warn' : 'ok',
+  };
+}
+
+function stampSeverity(resolved) {
+  for (const problem of resolved.problems) {
+    problem.severity = INSTRUCTION_SEVERITY[problem.kind] || 'warn';
+  }
+  resolved.problems.sort((a, b) => (a.severity === 'bad' ? 0 : 1) - (b.severity === 'bad' ? 0 : 1));
+  return resolved;
+}
 
 function managedClaudeMd() {
   if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode/CLAUDE.md';
@@ -431,6 +464,8 @@ function finalize(candidates, { projectDir, excludes }) {
     }
   }
 
+  problems.push(...instructionChecks(loaded));
+
   const unconditional = loaded.filter((item) => !item.conditional);
   return {
     projectDir,
@@ -503,7 +538,7 @@ export function resolveInstructions(projectDir) {
     resolved.problems.push({ kind: 'agents-md-not-imported', file: agentsFile, scope: 'project' });
   }
 
-  return resolved;
+  return stampSeverity(resolved);
 }
 
 /**
@@ -521,5 +556,5 @@ export function resolveGlobalInstructions({ home = os.homedir(), settingsFile = 
   const layers = settingsLayers(settingsFile ? { settingsFile } : {});
   const resolved = finalize(userCandidates(home, layers), { projectDir: null, excludes: readExcludes(layers) });
   resolved.problems.push(...unreferencedUserFiles(home, resolved.files));
-  return resolved;
+  return stampSeverity(resolved);
 }
