@@ -378,38 +378,6 @@ No bundler and no build step to run it: the backend is `node:http` plus `node:fs
 and the frontend is plain ES modules the browser loads directly. Two runtime
 dependencies, `marked` and `dompurify`, both only for rendering memory bodies safely.
 
-Styling is the one thing that is compiled. `styles/app.css` is the Tailwind v4
-source and `public/styles.css` is its committed output, so an installed copy is
-ready to serve and never builds anything. After editing the source, run
-`npm run build:css` and commit the result — CI rebuilds it and fails on drift.
-
-| Path | Purpose |
-| --- | --- |
-| `bin/claude-memory-admin.mjs` | CLI entry point and argument parsing |
-| `server.mjs` | HTTP server: static files + JSON API |
-| `src/projects.mjs` | Project discovery, slug → real path resolution |
-| `src/settings.mjs` | Layered reads of Claude Code's settings files, and the report behind the Settings tab |
-| `src/pathcache.mjs` | The opt-in record of confirmed project paths |
-| `src/sessions.mjs` | Session transcripts: bounded head reads, retention, provenance |
-| `src/stores.mjs` | Store discovery: the user scope, auto memory and the three agent scopes |
-| `src/instructions.mjs` | CLAUDE.md chain, `@` imports and rules resolution |
-| `src/parse.mjs` | `MEMORY.md` and frontmatter parsers, wikilinks |
-| `src/checks.mjs` | The consistency checks, as pure functions over parsed data |
-| `src/pathcheck.mjs` | The opt-in check of paths a memory names, against the repo |
-| `src/model.mjs` | Joins index, files, graph and health into one model |
-| `src/stats.mjs` | Load-limit accounting and overlap detection |
-| `src/search.mjs` | Full-text search across every store |
-| `src/mutate.mjs` | Delete / edit / merge / restore, the only code that writes |
-| `styles/app.css` | Tailwind source, compiled to `public/styles.css` |
-| `public/` | Frontend |
-
-Tests run against committed fixtures under `test/fixtures/`: a projects store
-encoding the awkward shapes real memory directories contain, including one index
-deliberately past the load limit, an `agents/` tree covering all three subagent
-scopes, and an `instructions/` tree covering the import and glob edge cases. Your own
-`~/.claude/projects` is additionally checked when it exists, always on a
-throwaway copy.
-
 ## License
 
 MIT
