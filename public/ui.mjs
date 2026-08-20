@@ -251,7 +251,7 @@ export const meterTop = 'mb-2.5 flex items-baseline gap-2.5';
 export const meterValue = 'font-mono text-2xl font-semibold tracking-tightest text-fg';
 export const meterUnit = 'flex-1 text-sm text-fg-muted';
 export const meterBar = 'h-2 overflow-hidden rounded-full border border-line bg-surface-sunken';
-const meterFillTone = { ok: 'bg-ok', near: 'bg-warn', over: 'bg-danger' };
+const meterFillTone = { ok: 'bg-ok', near: 'bg-warn', over: 'bg-danger', accent: 'bg-accent' };
 export const meterFill = (level) => cx('h-full transition-[width]', pick(meterFillTone, level, 'ok'));
 export const meterNote = 'mt-2.5 text-xs text-fg-muted';
 export const meterFacts = 'mt-3 flex flex-wrap gap-4 border-t border-line pt-3 font-mono text-2xs text-fg-muted';

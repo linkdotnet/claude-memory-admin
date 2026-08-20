@@ -1,0 +1,10 @@
+{
+  "sessions_scanned": 12,
+  "total_commands": 400,
+  "already_rtk": 100,
+  "since_days": 30,
+  "supported": [
+    { "command": "grep -n", "count": 40, "rtk_equivalent": "rtk grep", "category": "Files", "estimated_savings_tokens": 9000, "estimated_savings_pct": 75.0 },
+    { "command": "git log", "count": 12, "rtk_equivalent": "rtk git", "category": "Git", "estimated_savings_tokens": 2400, "estimated_savings_pct": 77.5 }
+  ]
+}

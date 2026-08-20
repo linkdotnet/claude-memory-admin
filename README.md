@@ -83,7 +83,7 @@ Everything lives under three tabs, each answering one question:
 | --- | --- | --- |
 | **Memory** | what is in here? | the memory list, `MEMORY.md`, the graph |
 | **Cleanup** | what should I fix? | the load meter and one worst-first list of fixable things |
-| **Environment** | what else does Claude load? | instructions, settings, sessions - all read-only |
+| **Environment** | what else does Claude load? | instructions, settings, sessions, tools - all read-only |
 
 Undo is a button in the project header rather than a fourth tab, because it is a
 safety net and not a place you browse.
@@ -304,6 +304,33 @@ It also names the failures that are otherwise silent:
 
 Every segment of Environment is read-only. It reports what is configured; it never
 writes a setting.
+
+## Tools: what a session saved, next to what it cost
+
+Every other meter here counts what a session *costs*. [rtk](https://github.com/rtk-ai/rtk)
+counts the other half: it proxies commands like `grep`, `git` and `cargo test`,
+strips their output down before it reaches the model, and keeps a ledger of what
+it removed.
+
+If `rtk` is on the PATH the server was started with, Environment grows a fourth
+segment, **Tools**, showing three things:
+
+- **This project** - what share of everything rtk read here never reached the
+  model. rtk scopes its ledger by working directory, so this is exactly the
+  commands run from this project's path.
+- **Every project** - the same figure for the whole machine, with the last
+  thirty days called out separately, because a lifetime average hides a habit
+  that changed last week.
+- **Left on the table** - commands that ran raw when rtk has a filter for them,
+  worst first, with rtk's own estimate of what each would have saved. The
+  estimates count what the filter would have stripped, not what the model would
+  have ignored.
+
+The segment is the one place this app runs a program that is not itself, so it
+stays off until you press **Read rtk stats**, and the answer is remembered. rtk
+is only ever handed a working directory the app resolved on its own, never one
+named in a request, and only its read-only `gain` and `discover` subcommands are
+called. If rtk is not installed, the segment does not appear at all.
 
 ## Everything it writes is reversible
 

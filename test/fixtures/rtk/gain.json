@@ -1,0 +1,22 @@
+{
+  "summary": {
+    "total_commands": 1200,
+    "total_input": 1000000,
+    "total_output": 250000,
+    "total_saved": 750000,
+    "avg_savings_pct": 75.0,
+    "total_time_ms": 600000,
+    "avg_time_ms": 500
+  },
+  "daily": [
+    { "date": "2026-01-01", "commands": 100, "input_tokens": 40000, "output_tokens": 30000, "saved_tokens": 10000, "savings_pct": 25.0, "total_time_ms": 5000, "avg_time_ms": 50 },
+    { "date": "2026-01-02", "commands": 200, "input_tokens": 60000, "output_tokens": 20000, "saved_tokens": 40000, "savings_pct": 66.66, "total_time_ms": 8000, "avg_time_ms": 40 },
+    { "date": "2026-01-03", "commands": 300, "input_tokens": 100000, "output_tokens": 20000, "saved_tokens": 80000, "savings_pct": 80.0, "total_time_ms": 9000, "avg_time_ms": 30 }
+  ],
+  "weekly": [
+    { "week_start": "2026-01-01", "week_end": "2026-01-07", "commands": 600, "input_tokens": 200000, "output_tokens": 70000, "saved_tokens": 130000, "savings_pct": 65.0, "total_time_ms": 22000, "avg_time_ms": 37 }
+  ],
+  "monthly": [
+    { "month": "2026-01", "commands": 1200, "input_tokens": 1000000, "output_tokens": 250000, "saved_tokens": 750000, "savings_pct": 75.0, "total_time_ms": 600000, "avg_time_ms": 500 }
+  ]
+}

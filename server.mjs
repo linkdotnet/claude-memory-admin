@@ -16,6 +16,7 @@ import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
 import { verifyPaths } from './src/pathcheck.mjs';
+import { findRtk, rtkReport } from './src/rtk.mjs';
 import { sessionsWithSummaries, transcriptDir } from './src/sessions.mjs';
 import {
   addIndexEntry,
@@ -217,6 +218,7 @@ async function handleApi(req, res, url) {
       rootSource: origin.path === ROOT ? origin.source : 'flag',
       rootFile: origin.path === ROOT ? origin.file : null,
       rootWarning: origin.invalid,
+      tools: [findRtk()],
       stores: listStores(ROOT),
     });
   }
@@ -274,6 +276,13 @@ async function handleApi(req, res, url) {
       return sendJson(res, 400, { error: 'This store keeps no session transcripts.' });
     }
     return sendJson(res, 200, sessionsWithSummaries(slugDir, { projectDir: storeProjectDir(store) }));
+  }
+
+  if (action === 'tools/rtk' && req.method === 'GET') {
+    const rtk = findRtk();
+    if (!rtk.found) throw new Error('rtk is not installed, or not on the PATH this server was started with.');
+    const report = await rtkReport(storeProjectDir(store));
+    return sendJson(res, 200, { ...report, path: rtk.path });
   }
 
   if (action === 'settings' && req.method === 'GET') {

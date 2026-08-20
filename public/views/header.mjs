@@ -23,6 +23,7 @@ const NAVIGATION = [
       { id: 'instructions', label: 'Instructions' },
       { id: 'settings', label: 'Settings' },
       { id: 'sessions', label: 'Sessions' },
+      { id: 'tools', label: 'Tools' },
     ],
   },
 ];
@@ -38,6 +39,7 @@ function segmentVisible(tab, segment, store) {
     return segment === 'index' ? Boolean(store.hasIndex) : true;
   }
   if (segment === 'instructions') return global || hasProjectDir(store);
+  if (segment === 'tools') return state.tools.some((tool) => tool.found);
   if (global) return false;
   if (segment === 'sessions') return Boolean(store.sessions?.count);
   return true;

@@ -166,3 +166,41 @@ test('the store model carries provenance for every memory that claims one', asyn
     server.close();
   }
 });
+
+test('the store listing names the companion tools it found on PATH', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    assert.ok(Array.isArray(listing.tools));
+    const rtk = listing.tools.find((tool) => tool.id === 'rtk');
+    assert.ok(rtk, 'rtk is the tool the tab strip asks about');
+    assert.equal(typeof rtk.found, 'boolean');
+    assert.equal(rtk.found ? typeof rtk.path : rtk.path, rtk.found ? 'string' : null);
+  } finally {
+    server.close();
+  }
+});
+
+test('a machine without rtk is told so, rather than served a stack trace', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const realPath = process.env.PATH;
+
+  try {
+    process.env.PATH = '';
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    assert.deepEqual(listing.tools, [{ id: 'rtk', found: false, path: null }]);
+
+    const store = listing.stores.find((s) => s.kind === 'auto');
+    const response = await fetch(`${base}/api/stores/${encodeURIComponent(store.id)}/tools/rtk`);
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /rtk is not installed/);
+  } finally {
+    process.env.PATH = realPath;
+    server.close();
+  }
+});
