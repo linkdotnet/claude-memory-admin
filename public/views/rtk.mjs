@@ -29,16 +29,6 @@ function meter(percent, unit, note, facts) {
   ]);
 }
 
-function head(report, actions) {
-  return node('div', { class: ui.sectionLabelRow }, [
-    node('span', { class: ui.sectionLabelInline, text: report.version ? `rtk ${report.version}` : 'rtk' }),
-    node('span', { class: ui.note, text: report.path || '' }),
-    node('span', { class: ui.listSpacer }),
-    node('button', { class: ui.buttonSmall, text: 'Re-read', onclick: actions.reread }),
-    node('button', { class: ui.buttonSmall, text: 'Turn off', onclick: actions.turnOff }),
-  ]);
-}
-
 function projectSection(report) {
   const project = report.project;
   if (!project) return [];
@@ -132,8 +122,16 @@ function errorNotes(report) {
   ];
 }
 
-export function renderRtk(container, report, actions) {
-  container.append(head(report, actions));
+export function rtkSummary(report) {
+  const project = report.project;
+  if (project && project.commands) {
+    return `${project.savedPct.toFixed(1)}% saved here · ${compact(project.saved)} tokens`;
+  }
+  if (report.machine) return `${report.machine.savedPct.toFixed(1)}% saved on this machine`;
+  return 'no ledger';
+}
+
+export function renderRtk(container, report) {
   for (const part of projectSection(report)) container.append(part);
 
   container.append(node('div', { class: ui.sectionLabel, text: report.project ? 'Every project' : 'This machine' }));

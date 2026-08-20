@@ -46,7 +46,7 @@ function paintTheme() {
   document.documentElement.dataset.theme = state.theme;
   const dark = state.theme === 'dark';
   const button = el('theme-toggle');
-  button.textContent = dark ? '☀' : '☾';
+  button.textContent = dark ? '☀️' : '🌙';
   button.title = dark ? 'Switch to the light theme  ( t )' : 'Switch to the dark theme  ( t )';
   button.setAttribute('aria-label', dark ? 'Switch to the light theme' : 'Switch to the dark theme');
   button.setAttribute('aria-pressed', String(dark));
@@ -130,6 +130,7 @@ async function init() {
 
   try {
     const data = await reloadStores();
+    if (data.version) el('source-link').textContent = `claude-memory-admin v${data.version}`;
     el('root-path').textContent = data.root;
     if (data.rootSource && data.rootSource !== 'default') {
       el('root-path').title = data.rootFile

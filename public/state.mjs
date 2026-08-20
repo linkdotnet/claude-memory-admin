@@ -22,6 +22,7 @@ const storedListSort = () => {
 export const state = {
   stores: [],
   tools: [],
+  version: null,
   storeId: null,
   store: null,
   tab: 'memory',
@@ -40,7 +41,7 @@ export const state = {
   listSelection: new Set(),
   selecting: false,
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
-  aux: { instructions: null, settings: null, sessions: null, sessionDay: null, rtk: null },
+  aux: { instructions: null, settings: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null },
   pathCheck: null,
 };
 

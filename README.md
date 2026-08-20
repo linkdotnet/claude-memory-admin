@@ -307,13 +307,18 @@ writes a setting.
 
 ## Tools: what a session saved, next to what it cost
 
-Every other meter here counts what a session *costs*. [rtk](https://github.com/rtk-ai/rtk)
-counts the other half: it proxies commands like `grep`, `git` and `cargo test`,
-strips their output down before it reaches the model, and keeps a ledger of what
-it removed.
+Environment grows a fourth segment, **Tools**, for each companion CLI it finds on
+the PATH the server was started with. Nothing appears if none is installed.
 
-If `rtk` is on the PATH the server was started with, Environment grows a fourth
-segment, **Tools**, showing three things:
+Each tool is one collapsible row carrying its own headline - *17.7% saved here*,
+*$317 here, 20 sessions* - so the answer is readable without opening anything,
+and which row you left open is remembered.
+
+### rtk - what never reached the model
+
+[rtk](https://github.com/rtk-ai/rtk) proxies commands like `grep`, `git` and
+`cargo test`, strips their output down before it reaches the model, and keeps a
+ledger of what it removed. Its panel shows three things:
 
 - **This project** - what share of everything rtk read here never reached the
   model. rtk scopes its ledger by working directory, so this is exactly the
@@ -326,11 +331,38 @@ segment, **Tools**, showing three things:
   estimates count what the filter would have stripped, not what the model would
   have ignored.
 
-The segment is the one place this app runs a program that is not itself, so it
-stays off until you press **Read rtk stats**, and the answer is remembered. rtk
-is only ever handed a working directory the app resolved on its own, never one
-named in a request, and only its read-only `gain` and `discover` subcommands are
-called. If rtk is not installed, the segment does not appear at all.
+### ccusage - what it actually cost
+
+[ccusage](https://github.com/ccusage/ccusage) prices the same session transcripts
+this app lists under **Sessions**, which makes it the other half of rtk's
+arithmetic: rtk reports what it stopped you paying for, ccusage reports the bill
+that arrived anyway. Its panel shows:
+
+- **This project** - what it cost, and what share of your whole Claude Code
+  spend that is. Sessions are attributed by the project slug ccusage reports,
+  which is the same slug this app names each store by.
+- **Every project** - the machine-wide total, with the bar showing how much of
+  it fell in the last thirty days.
+- **Where the money went** - spend per model, so an expensive habit is visible
+  as a model choice rather than as a number.
+- **Most expensive sessions** - the costliest sessions in this project by id.
+  These are the same ids the Sessions segment lists, so clicking one opens that
+  transcript there, scrolled to and unfolded. A session Claude Code has already
+  swept says so rather than failing quietly.
+
+It runs `ccusage claude session --json --offline`; `--offline` forces the cached
+price table, so no network call is made.
+
+### What the segment will and will not do
+
+This is the one place the app runs a program that is not itself, so it stays off
+until you press **Read tool stats**, and the answer is remembered. Only
+read-only subcommands are called, each tool is looked up by a fixed name in a
+small registry rather than by anything a request names, and rtk is only ever
+handed a working directory the app resolved on its own.
+
+Savings figures come from the tools themselves and are their own estimates; the
+cost figures come from the transcripts and are not.
 
 ## Everything it writes is reversible
 

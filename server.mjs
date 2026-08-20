@@ -16,7 +16,7 @@ import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
 import { verifyPaths } from './src/pathcheck.mjs';
-import { findRtk, rtkReport } from './src/rtk.mjs';
+import { detectTools, toolReport } from './src/tools.mjs';
 import { sessionsWithSummaries, transcriptDir } from './src/sessions.mjs';
 import {
   addIndexEntry,
@@ -129,6 +129,14 @@ function requireStore(id) {
   return store;
 }
 
+const VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version || null;
+  } catch {
+    return null;
+  }
+})();
+
 function storeProjectDir(store) {
   // The global store is the user scope itself, which no project owns.
   if (store.kind === 'global') return null;
@@ -218,7 +226,8 @@ async function handleApi(req, res, url) {
       rootSource: origin.path === ROOT ? origin.source : 'flag',
       rootFile: origin.path === ROOT ? origin.file : null,
       rootWarning: origin.invalid,
-      tools: [findRtk()],
+      version: VERSION,
+      tools: detectTools(),
       stores: listStores(ROOT),
     });
   }
@@ -278,11 +287,12 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, sessionsWithSummaries(slugDir, { projectDir: storeProjectDir(store) }));
   }
 
-  if (action === 'tools/rtk' && req.method === 'GET') {
-    const rtk = findRtk();
-    if (!rtk.found) throw new Error('rtk is not installed, or not on the PATH this server was started with.');
-    const report = await rtkReport(storeProjectDir(store));
-    return sendJson(res, 200, { ...report, path: rtk.path });
+  if (action.startsWith('tools/') && req.method === 'GET') {
+    const target = {
+      projectDir: store.kind === 'global' ? null : storeProjectDir(store),
+      slug: store.kind === 'auto' ? store.slug : null,
+    };
+    return sendJson(res, 200, await toolReport(action.slice('tools/'.length), target));
   }
 
   if (action === 'settings' && req.method === 'GET') {

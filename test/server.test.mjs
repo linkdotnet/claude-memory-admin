@@ -179,6 +179,10 @@ test('the store listing names the companion tools it found on PATH', async () =>
     assert.ok(rtk, 'rtk is the tool the tab strip asks about');
     assert.equal(typeof rtk.found, 'boolean');
     assert.equal(rtk.found ? typeof rtk.path : rtk.path, rtk.found ? 'string' : null);
+    for (const tool of listing.tools) {
+      assert.equal(typeof tool.label, 'string');
+      assert.match(tool.repo, /^https:\/\//);
+    }
   } finally {
     server.close();
   }
@@ -193,12 +197,21 @@ test('a machine without rtk is told so, rather than served a stack trace', async
   try {
     process.env.PATH = '';
     const listing = await (await fetch(`${base}/api/stores`)).json();
-    assert.deepEqual(listing.tools, [{ id: 'rtk', found: false, path: null }]);
+    assert.ok(listing.tools.length > 0);
+    for (const tool of listing.tools) {
+      assert.equal(tool.found, false);
+      assert.equal(tool.path, null);
+      assert.match(tool.repo, /^https:\/\//);
+    }
 
     const store = listing.stores.find((s) => s.kind === 'auto');
     const response = await fetch(`${base}/api/stores/${encodeURIComponent(store.id)}/tools/rtk`);
     assert.equal(response.status, 400);
     assert.match((await response.json()).error, /rtk is not installed/);
+
+    const unknown = await fetch(`${base}/api/stores/${encodeURIComponent(store.id)}/tools/whoami`);
+    assert.equal(unknown.status, 400);
+    assert.match((await unknown.json()).error, /Unknown tool/);
   } finally {
     process.env.PATH = realPath;
     server.close();

@@ -5,6 +5,8 @@ import { state } from '/state.mjs';
 import { sizeLabel, sessionDate, isAt } from '/parts.mjs';
 import { selectMemory } from '/store.mjs';
 import { paint } from '/bus.mjs';
+import { goTo } from '/parts.mjs';
+import { toast } from '/api.mjs';
 
 const TITLE_SOURCE = {
   'ai-title': 'title Claude Code generated for this session',
@@ -12,9 +14,15 @@ const TITLE_SOURCE = {
   prompt: 'first prompt, no generated title found in the part read',
 };
 
-function sessionRow(session, memoriesFrom) {
+export function focusSession(id) {
+  state.aux.sessionFocus = id;
+  state.aux.sessionDay = null;
+  goTo('environment', 'sessions');
+}
+
+function sessionRow(session, memoriesFrom, focused) {
   const soon = session.expiresInDays !== null && session.expiresInDays <= 7;
-  const caret = node('span', { class: ui.contextCaret, text: '\u25b8' });
+  const caret = node('span', { class: ui.contextCaret, text: focused ? '\u25be' : '\u25b8' });
 
   const tags = [];
   if (session.gitBranch) tags.push(node('span', { class: ui.badge('neutral'), text: session.gitBranch }));
@@ -29,7 +37,7 @@ function sessionRow(session, memoriesFrom) {
     tags.push(node('span', { class: ui.badge('project'), text: memory.name }));
   }
 
-  const body = node('div', { class: ui.contextBody, hidden: true });
+  const body = node('div', { class: ui.contextBody, hidden: !focused });
   const facts = node('dl', { class: ui.metaList });
   const rows = [
     ['session', session.id],
@@ -62,7 +70,7 @@ function sessionRow(session, memoriesFrom) {
 
   const button = node('button', {
     class: ui.contextRowButton,
-    'aria-expanded': 'false',
+    'aria-expanded': String(Boolean(focused)),
     onclick: (event) => {
       const open = body.hidden;
       body.hidden = !open;
@@ -227,9 +235,21 @@ export async function renderSessions(container) {
     }));
   }
   container.append(listHead);
+  const focus = state.aux.sessionFocus;
+  state.aux.sessionFocus = null;
+
   const card = node('div', { class: ui.card });
+  let focused = null;
   for (const session of visible) {
-    card.append(sessionRow(session, byOrigin.get(session.id) || []));
+    const row = sessionRow(session, byOrigin.get(session.id) || [], session.id === focus);
+    if (session.id === focus) focused = row;
+    card.append(row);
   }
   container.append(card);
+
+  if (focus && focused) {
+    requestAnimationFrame(() => focused.scrollIntoView({ block: 'center' }));
+  } else if (focus) {
+    toast('That transcript is no longer beside this store - Claude Code has swept it.');
+  }
 }

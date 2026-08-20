@@ -10,7 +10,7 @@ export async function openStore(id, { keepTab = false } = {}) {
     state.selecting = false;
   }
   state.storeId = id;
-  state.aux = { instructions: null, settings: null, sessions: null, sessionDay: null, rtk: null };
+  state.aux = { instructions: null, settings: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null };
   state.pathCheck = null;
   if (!keepTab) {
     const opening = state.stores.find((store) => store.id === id);
@@ -65,6 +65,7 @@ export async function reloadStores() {
   const data = await api('/api/stores');
   state.stores = data.stores;
   state.tools = data.tools || [];
+  state.version = data.version || null;
   paint('stores');
   sweepIssues();
   return data;

@@ -1,0 +1,77 @@
+{
+  "sessions": [
+    {
+      "cacheCreationTokens": 1000,
+      "cacheReadTokens": 80000,
+      "firstActivity": "2026-01-02T08:00:00.000Z",
+      "inputTokens": 500,
+      "lastActivity": "2026-01-02T11:00:00.000Z",
+      "modelBreakdowns": [
+        { "cacheCreationTokens": 1000, "cacheReadTokens": 80000, "cost": 8.0, "inputTokens": 500, "modelName": "claude-opus-5", "outputTokens": 4000 }
+      ],
+      "modelsUsed": ["claude-opus-5"],
+      "outputTokens": 4000,
+      "projectPath": "-Users-demo-repos-alpha",
+      "sessionId": "aaaaaaaa-0000-0000-0000-000000000001",
+      "totalCost": 8.0,
+      "totalTokens": 85500
+    },
+    {
+      "cacheCreationTokens": 500,
+      "cacheReadTokens": 20000,
+      "firstActivity": "2026-01-03T08:00:00.000Z",
+      "inputTokens": 200,
+      "lastActivity": "2026-01-03T09:00:00.000Z",
+      "modelBreakdowns": [
+        { "cacheCreationTokens": 500, "cacheReadTokens": 20000, "cost": 1.5, "inputTokens": 200, "modelName": "claude-opus-5", "outputTokens": 900 },
+        { "cacheCreationTokens": 0, "cacheReadTokens": 0, "cost": 0.5, "inputTokens": 0, "modelName": "claude-haiku-4-5-20251001", "outputTokens": 400 }
+      ],
+      "modelsUsed": ["claude-opus-5", "claude-haiku-4-5-20251001"],
+      "outputTokens": 1300,
+      "projectPath": "-Users-demo-repos-alpha",
+      "sessionId": "aaaaaaaa-0000-0000-0000-000000000002",
+      "totalCost": 2.0,
+      "totalTokens": 22000
+    },
+    {
+      "cacheCreationTokens": 0,
+      "cacheReadTokens": 5000,
+      "firstActivity": "2025-11-01T08:00:00.000Z",
+      "inputTokens": 100,
+      "lastActivity": "2025-11-01T09:00:00.000Z",
+      "modelBreakdowns": [
+        { "cacheCreationTokens": 0, "cacheReadTokens": 5000, "cost": 0.25, "inputTokens": 100, "modelName": "claude-opus-5", "outputTokens": 300 }
+      ],
+      "modelsUsed": ["claude-opus-5"],
+      "outputTokens": 300,
+      "projectPath": "-Users-demo-repos-alpha",
+      "sessionId": "aaaaaaaa-0000-0000-0000-000000000003",
+      "totalCost": 0.25,
+      "totalTokens": 5400
+    },
+    {
+      "cacheCreationTokens": 200,
+      "cacheReadTokens": 10000,
+      "firstActivity": "2026-01-04T08:00:00.000Z",
+      "inputTokens": 90,
+      "lastActivity": "2026-01-04T10:00:00.000Z",
+      "modelBreakdowns": [
+        { "cacheCreationTokens": 200, "cacheReadTokens": 10000, "cost": 4.0, "inputTokens": 90, "modelName": "claude-sonnet-5", "outputTokens": 700 }
+      ],
+      "modelsUsed": ["claude-sonnet-5"],
+      "outputTokens": 700,
+      "projectPath": "-Users-demo-repos-beta",
+      "sessionId": "bbbbbbbb-0000-0000-0000-000000000001",
+      "totalCost": 4.0,
+      "totalTokens": 10990
+    }
+  ],
+  "totals": {
+    "cacheCreationTokens": 1700,
+    "cacheReadTokens": 115000,
+    "inputTokens": 890,
+    "outputTokens": 6300,
+    "totalCost": 14.25,
+    "totalTokens": 123890
+  }
+}

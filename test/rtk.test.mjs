@@ -36,7 +36,7 @@ function fakeRtk(overrides = {}) {
 
 const report = (projectDir, overrides) => {
   const { run, calls } = fakeRtk(overrides);
-  return rtkReport(projectDir, { run, home: HOME }).then((value) => ({ value, calls }));
+  return rtkReport({ projectDir }, { run, home: HOME }).then((value) => ({ value, calls }));
 };
 
 test('an executable on PATH is found, and a directory of the same name is not', () => {

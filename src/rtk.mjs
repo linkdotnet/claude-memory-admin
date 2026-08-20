@@ -1,66 +1,16 @@
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
+
+import { collector, findBinary, num, parseJson, pct, runBinary, text, usableDir } from './toolrun.mjs';
 
 const BINARY = 'rtk';
-const TIMEOUT_MS = 15000;
-const MAX_BUFFER = 4 * 1024 * 1024;
 const DISCOVER_DAYS = 30;
 const DISCOVER_LIMIT = 10;
 const MISSED_LIMIT = 12;
 const TREND_DAYS = 30;
 
-const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-const text = (value) => (typeof value === 'string' ? value : '');
-const pct = (part, whole) => (whole > 0 ? (part / whole) * 100 : 0);
+export const findRtk = (env = process.env) => ({ id: BINARY, ...findBinary(BINARY, env) });
 
-function candidateNames(env) {
-  if (process.platform !== 'win32') return [BINARY];
-  const exts = text(env.PATHEXT || '.EXE').split(';').filter(Boolean);
-  return exts.map((ext) => BINARY + ext.toLowerCase());
-}
-
-export function findRtk(env = process.env) {
-  const dirs = text(env.PATH).split(path.delimiter).filter(Boolean);
-  const names = candidateNames(env);
-  for (const dir of dirs) {
-    for (const name of names) {
-      const candidate = path.join(dir, name);
-      try {
-        if (!fs.statSync(candidate).isFile()) continue;
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return { id: BINARY, found: true, path: candidate };
-      } catch {
-        continue;
-      }
-    }
-  }
-  return { id: BINARY, found: false, path: null };
-}
-
-function runRtk(args, { cwd, timeout = TIMEOUT_MS } = {}) {
-  return new Promise((resolve, reject) => {
-    const options = { cwd, timeout, maxBuffer: MAX_BUFFER, windowsHide: true, encoding: 'utf8' };
-    execFile(BINARY, args, options, (err, stdout, stderr) => {
-      if (!err) return resolve(stdout);
-      if (err.code === 'ENOENT') return reject(new Error('rtk is not on this process PATH'));
-      if (err.killed) return reject(new Error(`rtk ${args[0]} was still running after ${timeout}ms and was stopped`));
-      const detail = text(stderr || stdout).trim().split('\n')[0];
-      return reject(new Error(detail ? `rtk ${args[0]} failed: ${detail}` : `rtk ${args[0]} exited ${err.code}`));
-    });
-  });
-}
-
-function parseJson(raw, label) {
-  try {
-    const value = JSON.parse(raw);
-    if (!value || typeof value !== 'object') throw new Error('not an object');
-    return value;
-  } catch {
-    throw new Error(`rtk ${label} did not answer with JSON`);
-  }
-}
+const runRtk = (args, options) => runBinary(BINARY, args, options);
 
 function summaryOf(raw) {
   const summary = raw && typeof raw.summary === 'object' && raw.summary ? raw.summary : {};
@@ -133,35 +83,17 @@ function discoverOf(raw) {
   };
 }
 
-function usableDir(dir) {
-  if (!dir) return null;
-  try {
-    return fs.statSync(dir).isDirectory() ? dir : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function rtkReport(projectDir, { run = runRtk, home = os.homedir() } = {}) {
-  const errors = [];
-  const step = async (label, work) => {
-    try {
-      return await work();
-    } catch (err) {
-      errors.push({ step: label, message: err.message });
-      return null;
-    }
-  };
-
-  const dir = usableDir(projectDir);
+export async function rtkReport(target = {}, { run = runRtk, home = os.homedir() } = {}) {
+  const { errors, step } = collector();
+  const dir = usableDir(target.projectDir);
 
   const [version, machine, project, discover] = await Promise.all([
     step('version', async () => text(await run(['--version'], { cwd: home })).trim().replace(/^rtk\s+/, '')),
-    step('gain', async () => parseJson(await run(['gain', '-a', '--format', 'json'], { cwd: home }), 'gain')),
-    dir ? step('gain --project', async () => parseJson(await run(['gain', '-p', '--format', 'json'], { cwd: dir }), 'gain --project')) : null,
+    step('gain', async () => parseJson(await run(['gain', '-a', '--format', 'json'], { cwd: home }), 'rtk gain')),
+    dir ? step('gain --project', async () => parseJson(await run(['gain', '-p', '--format', 'json'], { cwd: dir }), 'rtk gain --project')) : null,
     dir ? step('discover', async () => parseJson(
       await run(['discover', '--format', 'json', '-s', String(DISCOVER_DAYS), '-l', String(DISCOVER_LIMIT)], { cwd: dir }),
-      'discover',
+      'rtk discover',
     )) : null,
   ]);
 

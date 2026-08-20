@@ -121,3 +121,11 @@ test('no view or dialog module grows back into a second app.mjs', () => {
     .filter(({ lines }) => lines > 300);
   assert.deepEqual(oversized, [], `split these up: ${JSON.stringify(oversized)}`);
 });
+
+test('a false boolean prop leaves the attribute off rather than setting it to "false"', () => {
+  const source = read('public/dom.mjs');
+  assert.match(source, /value === false/);
+  const index = source.indexOf('value === false');
+  const setter = source.indexOf('setAttribute(key, value)');
+  assert.ok(index < setter, 'the false case has to be checked before the generic setAttribute');
+});
