@@ -2,7 +2,7 @@ import { isDialogOpen } from '/dialog.mjs';
 import { el, node } from '/dom.mjs';
 import * as ui from '/ui.mjs';
 import { state } from '/state.mjs';
-import { toast } from '/api.mjs';
+import { api, toast } from '/api.mjs';
 import { register, paint } from '/bus.mjs';
 import { openStore, reloadStores } from '/store.mjs';
 import { renderStores } from '/views/stores.mjs';
@@ -76,6 +76,14 @@ function applyStyles() {
   }
 }
 
+async function refreshActiveSessions() {
+  try {
+    const data = await api('/api/stores/active');
+    state.activeSessions = data.sessions;
+    paint('stores', 'tabs', 'tab');
+  } catch { /* a failed poll just leaves the last-known state on screen */ }
+}
+
 function registerRegions() {
   register('stores', renderStores);
   register('header', renderStoreHeader);
@@ -144,6 +152,12 @@ async function init() {
   } catch (err) {
     toast(err.message, { error: true });
   }
+
+  refreshActiveSessions();
+  setInterval(refreshActiveSessions, 10000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshActiveSessions();
+  });
 }
 
 init();

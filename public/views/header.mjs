@@ -56,7 +56,10 @@ function segmentBadge(id) {
   }
   if (id === 'sessions') {
     const sessions = state.store.sessions;
-    return sessions ? { badge: String(sessions.count), tone: sessions.expiringCount ? 'warn' : 'neutral' } : {};
+    if (!sessions) return {};
+    const live = state.activeSessions.some((s) => s.storeId === state.store.id);
+    const badge = live ? `● ${sessions.count}` : String(sessions.count);
+    return { badge, tone: live ? 'ok' : sessions.expiringCount ? 'warn' : 'neutral' };
   }
   return {};
 }

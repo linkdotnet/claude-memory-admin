@@ -66,6 +66,23 @@ test('the issue sweep counts every store without shipping any of their models', 
   }
 });
 
+test('the active-sessions endpoint answers with a session list, tagged with the store it belongs to', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const active = await (await fetch(`${base}/api/stores/active`)).json();
+    assert.ok(Array.isArray(active.sessions));
+    for (const session of active.sessions) {
+      assert.equal(typeof session.pid, 'number');
+      assert.ok('storeId' in session);
+    }
+  } finally {
+    server.close();
+  }
+});
+
 test('a store with no project directory refuses the path check instead of guessing one', async () => {
   const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
   await new Promise((resolve) => server.once('listening', resolve));

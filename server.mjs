@@ -18,6 +18,7 @@ import { searchAll } from './src/search.mjs';
 import { verifyPaths } from './src/pathcheck.mjs';
 import { detectTools, toolReport } from './src/tools.mjs';
 import { sessionsWithSummaries, transcriptDir } from './src/sessions.mjs';
+import { readLiveSessions } from './src/liveSessions.mjs';
 import {
   addIndexEntry,
   addIndexEntryPreview,
@@ -240,6 +241,18 @@ async function handleApi(req, res, url) {
   // Real ids always carry a "kind:" prefix, so the two can never collide.
   if (segments.length === 3 && segments[1] === 'stores' && segments[2] === 'issues' && req.method === 'GET') {
     return sendJson(res, 200, { stores: issueSweep() });
+  }
+
+  // Same "ahead of requireStore" reasoning as the issues sweep above: real
+  // store ids always carry a "kind:" prefix, so "active" can never collide.
+  if (segments.length === 3 && segments[1] === 'stores' && segments[2] === 'active' && req.method === 'GET') {
+    const live = readLiveSessions();
+    const projectStores = listStores(ROOT).filter((s) => s.kind === 'auto' && s.pathExists);
+    const sessions = live.map((session) => ({
+      ...session,
+      storeId: projectStores.find((s) => s.path === session.cwd)?.id ?? null,
+    }));
+    return sendJson(res, 200, { sessions });
   }
 
   if (segments[1] !== 'stores' || segments.length < 3) {

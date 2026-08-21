@@ -20,11 +20,26 @@ export function focusSession(id) {
   goTo('environment', 'sessions');
 }
 
-function sessionRow(session, memoriesFrom, focused) {
+function agoLabel(ms) {
+  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
+}
+
+function sessionRow(session, memoriesFrom, focused, live) {
   const soon = session.expiresInDays !== null && session.expiresInDays <= 7;
   const caret = node('span', { class: ui.contextCaret, text: focused ? '\u25be' : '\u25b8' });
 
   const tags = [];
+  if (live) {
+    tags.push(node('span', {
+      class: ui.badge('ok'),
+      text: live.status === 'waiting' ? 'waiting' : live.status || 'active',
+      title: live.waitingFor || `updated ${agoLabel(live.updatedAt)}`,
+    }));
+  }
   if (session.gitBranch) tags.push(node('span', { class: ui.badge('neutral'), text: session.gitBranch }));
   if (session.model) tags.push(node('span', { class: ui.badge('neutral'), text: session.model }));
   if (session.expiresInDays !== null) {
@@ -196,7 +211,32 @@ export async function renderSessions(container) {
     paint('tab');
   };
 
+  const active = state.activeSessions.filter((s) => s.storeId === state.storeId);
+  const byId = new Map(active.map((s) => [s.sessionId, s]));
+
   container.append(node('p', { class: ui.noteTight, text: 'The transcripts sitting beside this store\u2019s memory. Claude Code deletes them once they pass the retention period and never touches memory/, so this is the evidence that expires while the memories stay. This tab only reads, and only the head of each file - nothing here deletes a transcript.' }));
+
+  if (active.length) {
+    const list = node('div', { class: ui.card });
+    for (const session of active) {
+      list.append(node('button', {
+        class: ui.contextRowButton,
+        onclick: () => focusSession(session.sessionId),
+      }, [
+        node('div', { class: ui.contextMain }, [
+          node('div', { class: ui.contextTags }, [
+            node('span', {
+              class: ui.badge('ok'),
+              text: session.status === 'waiting' ? 'waiting' : session.status || 'active',
+            }),
+          ]),
+          node('div', { class: ui.contextFile, text: session.name || session.sessionId }),
+        ]),
+        node('div', { class: ui.contextSize, text: session.waitingFor || agoLabel(session.updatedAt) }),
+      ]));
+    }
+    container.append(meterPanel('Active now', null, list));
+  }
 
   container.append(node('div', { class: ui.meter }, [
     node('div', { class: ui.meterTop }, [
@@ -241,7 +281,7 @@ export async function renderSessions(container) {
   const card = node('div', { class: ui.card });
   let focused = null;
   for (const session of visible) {
-    const row = sessionRow(session, byOrigin.get(session.id) || [], session.id === focus);
+    const row = sessionRow(session, byOrigin.get(session.id) || [], session.id === focus, byId.get(session.id));
     if (session.id === focus) focused = row;
     card.append(row);
   }

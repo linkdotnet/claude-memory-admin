@@ -22,10 +22,17 @@ function issueTitle(store) {
   return parts.length ? `${store.dir}\n${parts.join(', ')}` : store.dir;
 }
 
+function activeTitle(active) {
+  const waiting = active.filter((s) => s.status === 'waiting').length;
+  const label = active.length === 1 ? '1 session' : `${active.length} sessions`;
+  return waiting ? `${label} - ${waiting} waiting for input` : `${label} ${active.length === 1 ? 'is' : 'are'} busy`;
+}
+
 function storeButton(store) {
   const global = store.kind === 'global';
   const health = !global && !store.hasMemoryDir ? 'none' : store.severity || 'ok';
   const off = store.autoMemory && store.autoMemory.known && !store.autoMemory.enabled;
+  const active = state.activeSessions.filter((s) => s.storeId === store.id);
   return node('button', {
     class: ui.storeItem({ active: store.id === state.storeId, empty: !global && !store.hasMemoryDir }),
     onclick: () => openStore(store.id),
@@ -34,6 +41,7 @@ function storeButton(store) {
     node('span', { class: ui.storeRow }, [
       node('span', { class: ui.dot(health) }),
       node('span', { class: ui.storeName, text: store.label }),
+      active.length ? node('span', { class: ui.dot('ok'), title: activeTitle(active) }) : null,
       off ? node('span', { class: ui.offMarker, text: 'off', title: 'Auto memory is disabled for this project' }) : null,
       global ? null : node('span', { class: ui.storeCount, text: store.hasMemoryDir ? String(store.memoryCount) : '-' }),
     ]),

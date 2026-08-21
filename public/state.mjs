@@ -43,6 +43,7 @@ export const state = {
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
   aux: { instructions: null, settings: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null },
   pathCheck: null,
+  activeSessions: [],
 };
 
 const RANK = { ok: 0, warn: 1, bad: 2 };
