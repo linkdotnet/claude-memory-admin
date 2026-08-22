@@ -326,6 +326,18 @@ const settingsLayerValueBase = 'font-mono text-2xs break-all';
 const settingsLayerValueState = { wins: 'text-fg', shadowed: 'text-fg-subtle line-through decoration-line-strong' };
 export const settingsLayerValue = (wins) => cx(settingsLayerValueBase, wins ? settingsLayerValueState.wins : settingsLayerValueState.shadowed);
 
+export const costControls = 'mb-3 flex flex-wrap items-center gap-2.5';
+export const costControlLabel = 'font-mono text-2xs uppercase tracking-widest text-fg-subtle';
+export const costEmpty = 'rounded-md border border-dashed border-line px-3.5 py-4 text-xs text-fg-muted';
+export const agentRow = 'mb-2 rounded-md border border-line bg-surface-sunken px-3.5 py-3 last:mb-0';
+export const agentTop = 'mb-1 flex flex-wrap items-baseline gap-2.5';
+export const agentName = 'font-mono text-sm font-medium text-fg';
+export const agentFile = 'min-w-0 flex-1 font-mono text-2xs break-all text-fg-subtle';
+export const agentDesc = 'mb-1.5 line-clamp-2 text-xs text-fg-muted';
+export const agentTools = 'mb-2.5 font-mono text-2xs break-all text-fg-subtle';
+export const agentControls = 'flex flex-wrap items-center gap-3';
+export const agentControl = 'flex items-center gap-1.5';
+
 export const toastRoot = 'fixed bottom-5 left-1/2 z-200 flex -translate-x-1/2 flex-col items-center gap-2';
 const toastBase = 'flex items-center gap-3 rounded-full px-4 py-2 text-sm shadow-pop';
 const toastTone = { info: 'bg-fg text-canvas', error: 'bg-danger text-on-accent' };

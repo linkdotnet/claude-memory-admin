@@ -35,6 +35,21 @@ test('every other kind of store is left writable', () => {
   }
 });
 
+// The Cost handlers are the one exception to the refusal above, and the only
+// writes this app makes outside a memory store. They are carved out by action
+// name so that widening the guard cannot accidentally admit a handler that
+// resolves a path inside ~/.claude.
+test('only the two cost actions are carved out of the global write refusal', () => {
+  const global = listStores(FIXTURE_ROOT, { home: HOME })[0];
+
+  for (const action of ['cost/setting', 'cost/agent']) {
+    assert.doesNotThrow(() => refuseWritesToGlobal(global, 'POST', action));
+  }
+  for (const action of ['path/remember', 'delete', 'project/delete', 'index/hook', 'cost', 'cost/other', '']) {
+    assert.throws(() => refuseWritesToGlobal(global, 'POST', action), /read-only/);
+  }
+});
+
 test('the issue sweep counts every store without shipping any of their models', async () => {
   const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
   await new Promise((resolve) => server.once('listening', resolve));
@@ -132,6 +147,34 @@ test('the global store answers the read endpoints and holds no memory', async ()
     const refused = await fetch(`${base}/api/stores/${encodeURIComponent(global.id)}/path/remember`, { method: 'POST' });
     assert.equal(refused.status, 400);
     assert.match((await refused.json()).error, /read-only/);
+
+    // Read-only, so it is safe to hit for real. The matching POST is exercised
+    // in cost.test.mjs against a temp file instead: over HTTP it would write the
+    // developer's own ~/.claude/settings.json.
+    const cost = await (await fetch(`${base}/api/stores/${encodeURIComponent(global.id)}/cost`)).json();
+    assert.deepEqual(cost.settings.keys.map((k) => k.key), ['subagentModel', 'outputStyle']);
+    assert.ok(Array.isArray(cost.agents));
+    assert.ok(cost.agentsDir.endsWith(path.join('.claude', 'agents')));
+    assert.deepEqual(Object.keys(cost.agentFields), ['model', 'effort']);
+  } finally {
+    server.close();
+  }
+});
+
+test('the cost endpoint is user scope only', async () => {
+  const server = startServer({ port: 0, root: FIXTURE_ROOT, open: false });
+  await new Promise((resolve) => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const listing = await (await fetch(`${base}/api/stores`)).json();
+    const project = listing.stores.find((s) => s.kind === 'auto');
+
+    for (const action of ['cost', 'cost/setting', 'cost/agent']) {
+      const response = await fetch(`${base}/api/stores/${encodeURIComponent(project.id)}/${action}`);
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, /user-scope/);
+    }
   } finally {
     server.close();
   }

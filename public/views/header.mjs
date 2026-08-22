@@ -22,6 +22,7 @@ const NAVIGATION = [
     segments: [
       { id: 'instructions', label: 'Instructions' },
       { id: 'settings', label: 'Settings' },
+      { id: 'cost', label: 'Cost' },
       { id: 'sessions', label: 'Sessions' },
       { id: 'tools', label: 'Tools' },
     ],
@@ -39,13 +40,27 @@ function segmentVisible(tab, segment, store) {
     return segment === 'index' ? Boolean(store.hasIndex) : true;
   }
   if (segment === 'instructions') return global || hasProjectDir(store);
+  if (segment === 'cost') return global;
   if (segment === 'tools') return state.tools.some((tool) => tool.found);
   if (global) return false;
   if (segment === 'sessions') return Boolean(store.sessions?.count);
   return true;
 }
 
+export const costProblems = () => {
+  const data = state.aux.cost;
+  if (!data) return [];
+  return [
+    ...(data.settings?.problems || []),
+    ...(data.agents || []).flatMap((agent) => agent.problems || []),
+  ];
+};
+
 function segmentBadge(id) {
+  if (id === 'cost') {
+    const problems = costProblems();
+    return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
+  }
   if (id === 'instructions') {
     const problems = state.aux.instructions?.problems || [];
     return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
@@ -91,6 +106,7 @@ function tabBadge(tab, store) {
   const problems = [
     ...(state.aux.instructions?.problems || []),
     ...(state.aux.settings?.problems || []),
+    ...costProblems(),
   ];
   return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
 }

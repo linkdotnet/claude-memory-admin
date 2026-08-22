@@ -10,7 +10,7 @@ export async function openStore(id, { keepTab = false } = {}) {
     state.selecting = false;
   }
   state.storeId = id;
-  state.aux = { instructions: null, settings: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null };
+  state.aux = { instructions: null, settings: null, cost: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null };
   state.pathCheck = null;
   if (!keepTab) {
     const opening = state.stores.find((store) => store.id === id);
@@ -42,20 +42,24 @@ export async function openStore(id, { keepTab = false } = {}) {
   paint('view');
   paint('tabs', 'tab');
 
+  const global = state.store.kind === 'global';
   Promise.all([
     api(`/api/stores/${encodeURIComponent(id)}/instructions`).catch(() => null),
     api(`/api/stores/${encodeURIComponent(id)}/settings`).catch(() => null),
-  ]).then(([instructions, settings]) => {
+    global ? api(`/api/stores/${encodeURIComponent(id)}/cost`).catch(() => null) : null,
+  ]).then(([instructions, settings, cost]) => {
     if (state.storeId !== id) return;
-    state.aux = { ...state.aux, instructions, settings };
+    state.aux = { ...state.aux, instructions, settings, cost };
     paint('tabs');
     if (!listed) return;
+    const costIssues = cost ? [...cost.settings.problems, ...cost.agents.flatMap((a) => a.problems)] : [];
     listed.context = instructions ? instructions.problems.length : 0;
-    listed.settings = settings ? settings.problems.length : 0;
+    listed.settings = (settings ? settings.problems.length : 0) + costIssues.length;
     listed.severity = worst(
       state.store.health.severity,
       instructions ? worstSeverity(instructions.problems) : 'ok',
       settings ? worstSeverity(settings.problems) : 'ok',
+      worstSeverity(costIssues),
     );
     paint('stores');
   });

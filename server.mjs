@@ -12,6 +12,8 @@ import { projectsRoot, resolveRoot } from './src/projects.mjs';
 import { buildStore } from './src/model.mjs';
 import { resolveGlobalInstructions, resolveInstructions, summarise } from './src/instructions.mjs';
 import { settingsReport, summariseSettings } from './src/settings.mjs';
+import { costReport, writeUserSetting } from './src/cost.mjs';
+import { AGENTS_DIR, AGENT_FIELDS, agentsDirExists, listAgents, setAgentField } from './src/agents.mjs';
 import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
@@ -147,15 +149,23 @@ function storeProjectDir(store) {
 
 /**
  * The global store holds instructions, not memory, and its directory is ~/.claude
- * itself. Every write endpoint below resolves a target inside `store.dir`, so
- * without this guard a delete aimed at it would land on the user's CLAUDE.md and
- * settings rather than on a memory file. It is read-only, and refused here once
- * rather than in each of the fifteen handlers.
+ * itself. Every memory write endpoint below resolves a target inside `store.dir`,
+ * so without this guard a delete aimed at it would land on the user's CLAUDE.md
+ * and settings rather than on a memory file. It is refused here once rather than
+ * in each of the fifteen handlers.
+ *
+ * The Cost handlers are the two exceptions, and the only writes this app makes
+ * outside a memory store. They do not take a path from the request at all: one
+ * writes an allowlisted key to ~/.claude/settings.json, the other one of two
+ * frontmatter fields in a named file inside ~/.claude/agents. Neither can reach
+ * an instruction file, which is what the rest of this guard exists to protect.
  */
-export function refuseWritesToGlobal(store, method) {
-  if (store.kind === 'global' && method !== 'GET') {
-    throw new Error('The global store is read-only: it holds instruction files, not memory.');
-  }
+const GLOBAL_WRITE_ACTIONS = new Set(['cost/setting', 'cost/agent']);
+
+export function refuseWritesToGlobal(store, method, action = null) {
+  if (store.kind !== 'global' || method === 'GET') return;
+  if (action && GLOBAL_WRITE_ACTIONS.has(action)) return;
+  throw new Error('The global store is read-only: it holds instruction files, not memory.');
 }
 
 /** A store with nothing to build a memory model from, in the shape the frontend expects. */
@@ -260,9 +270,9 @@ async function handleApi(req, res, url) {
   }
 
   const store = requireStore(decodeURIComponent(segments[2]));
-  refuseWritesToGlobal(store, req.method);
-  const dir = store.dir;
   const action = segments.slice(3).join('/');
+  refuseWritesToGlobal(store, req.method, action);
+  const dir = store.dir;
 
   if (!action && req.method === 'GET') {
     // buildStore reads every .md in the directory as a memory file, which for
@@ -310,6 +320,34 @@ async function handleApi(req, res, url) {
 
   if (action === 'settings' && req.method === 'GET') {
     return sendJson(res, 200, settingsReport({ projectDir: storeProjectDir(store) }));
+  }
+
+  // The Cost segment. User scope only: the knobs it writes are about every
+  // session on the machine, and the file it writes them to is ~/.claude/settings.json.
+  if ((action === 'cost' || action.startsWith('cost/')) && store.kind !== 'global') {
+    return sendJson(res, 400, { error: 'The cost settings are user-scope, and are edited from the Global entry.' });
+  }
+
+  if (action === 'cost' && req.method === 'GET') {
+    return sendJson(res, 200, {
+      settings: costReport(),
+      agents: listAgents(),
+      agentsDir: AGENTS_DIR,
+      agentsDirExists: agentsDirExists(),
+      agentFields: AGENT_FIELDS,
+    });
+  }
+
+  if (action === 'cost/setting' && req.method === 'POST') {
+    const body = await readBody(req);
+    writeUserSetting(body.key, body.value ?? null);
+    return sendJson(res, 200, { settings: costReport() });
+  }
+
+  if (action === 'cost/agent' && req.method === 'POST') {
+    const body = await readBody(req);
+    const agents = setAgentField(body.file, body.field, body.value ?? null);
+    return sendJson(res, 200, { agents, agentsDir: AGENTS_DIR, agentsDirExists: agentsDirExists() });
   }
 
   if (action === 'delete-preview' && req.method === 'POST') {

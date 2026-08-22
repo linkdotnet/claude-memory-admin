@@ -78,11 +78,15 @@ function readIndex(dir) {
 }
 
 /**
- * Replace MEMORY.md atomically: write a sibling temp file, fsync it, rename over
+ * Replace a file atomically: write a sibling temp file, fsync it, rename over
  * the target. A .backup copy is kept for the duration and restored if anything
- * throws, so a crash can never leave a truncated index.
+ * throws, so a crash can never leave a truncated file behind.
+ *
+ * Exported because the settings and agent writers outside this module need the
+ * same guarantee, and a second implementation of it is a second chance to get
+ * the crash path wrong.
  */
-function writeFileAtomic(dir, name, text) {
+export function writeFileAtomic(dir, name, text) {
   const target = path.join(dir, name);
   const tmp = path.join(dir, `.${name}.tmp-${process.pid}`);
   const backup = path.join(dir, `.${name}.backup`);

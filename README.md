@@ -83,7 +83,7 @@ Everything lives under three tabs, each answering one question:
 | --- | --- | --- |
 | **Memory** | what is in here? | the memory list, `MEMORY.md`, the graph |
 | **Cleanup** | what should I fix? | the load meter and one worst-first list of fixable things |
-| **Environment** | what else does Claude load? | instructions, settings, sessions, tools - all read-only |
+| **Environment** | what else does Claude load? | instructions, settings, sessions, tools - and, on Global, the two cost knobs it will write |
 
 Undo is a button in the project header rather than a fourth tab, because it is a
 safety net and not a place you browse.
@@ -244,7 +244,8 @@ Backticks are respected, so a `` `@README` `` in your prose is not reported as a
 import, and neither is an email address.
 
 Every file listed opens in place, so you can read what actually loads without
-leaving the page. Nothing here is editable: the app never rewrites a `CLAUDE.md`.
+leaving the page. Nothing here is editable: the app never rewrites a `CLAUDE.md`,
+a rule file or anything else in the instruction chain.
 
 ### The user scope on its own
 
@@ -254,8 +255,8 @@ the sidebar. It is what every session on the machine pays for before a project i
 even chosen, and it resolves without a project directory, so it is there even when
 no project's real path could be recovered from a transcript.
 
-It holds instructions rather than memory, so it is read-only and has no MEMORY.md,
-graph or trash. Search does not reach into it.
+It holds instructions rather than memory, so it has no MEMORY.md, graph or trash,
+and search does not reach into it. It is the one entry with a **Cost** tab, below.
 
 This is re-derived from the documented resolution rules rather than reported by
 Claude Code, and the app says so. Run `/context` in a session for the ground
@@ -302,8 +303,42 @@ It also names the failures that are otherwise silent:
 - A value Claude Code accepts the key of but not the number, like a
   `cleanupPeriodDays` below 1: it shows what is written *and* what applies.
 
-Every segment of Environment is read-only. It reports what is configured; it never
-writes a setting.
+The Settings segment is read-only. It reports what is configured; it never writes
+a setting. The Cost segment, below, is the one that does.
+
+## The two settings that decide what a session costs
+
+The **Cost** segment sits on the Global entry, beside Instructions, and it is the
+only place in this app that writes anything outside a memory store. Two keys, both
+saved to `~/.claude/settings.json`:
+
+- **`CLAUDE_CODE_SUBAGENT_MODEL`** (in the `env` block) - the model every subagent,
+  agent-team member and workflow agent runs on. It overrides the model asked for at
+  the call site *and* the `model:` line in an agent file, so it is the single switch
+  that moves all of them at once. Searching and summarising rarely needs more than
+  Haiku, and it is the cheapest change available.
+- **`outputStyle`** - `Concise` leads with the result and drops the narration, which
+  cuts output tokens on every turn. `Explanatory` and `Learning` add to them by
+  design. Custom styles found in `~/.claude/output-styles` are offered alongside the
+  built-in ones. It is part of the system prompt, so a change lands on `/clear` or
+  the next session, and it reaches the main conversation only - a subagent runs its
+  own system prompt.
+
+Each is shown the way the Settings segment shows a key: every layer that sets it,
+strongest first, with the losers struck through. Your user file is the weakest of
+the five, so when something stronger already sets the key the panel says the save
+will not take effect *before* you make it. An environment variable outranks every
+file, and is called out when it disagrees with what is on disk.
+
+Below them, one row per agent file in `~/.claude/agents`, each with a **model** and
+an **effort** picker - a summariser pinned to Haiku while a reviewer stays on Opus.
+Only those two frontmatter fields are ever written: the prompt body, the tool lists
+and every other field are left byte-identical, horizontal rules in the prose
+included. The built-in Explore, Plan and general-purpose agents are not files and
+cannot be retuned here; `CLAUDE_CODE_SUBAGENT_MODEL` is what moves those.
+
+A settings file that exists but does not parse is refused rather than rewritten:
+overwriting it would silently drop every setting the tool could not read.
 
 ## Tools: what a session saved, next to what it cost
 

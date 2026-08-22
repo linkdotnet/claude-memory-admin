@@ -59,7 +59,7 @@ export function managedSettingsFiles() {
   return files;
 }
 
-function readJsonDetailed(file) {
+export function readJsonDetailed(file) {
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf8');
@@ -81,7 +81,7 @@ function readJsonDetailed(file) {
   return { status: 'ok', data: parsed, error: null };
 }
 
-function settingsCandidates({ projectDir = null, settingsFile = null } = {}) {
+export function settingsCandidates({ projectDir = null, settingsFile = null, userFile = USER_SETTINGS } = {}) {
   const candidates = [];
   for (const file of managedSettingsFiles()) candidates.push({ scope: 'managed', file });
   if (settingsFile) candidates.push({ scope: 'settings-flag', file: settingsFile });
@@ -89,7 +89,7 @@ function settingsCandidates({ projectDir = null, settingsFile = null } = {}) {
     candidates.push({ scope: 'local', file: path.join(projectDir, '.claude', 'settings.local.json') });
     candidates.push({ scope: 'project', file: path.join(projectDir, '.claude', 'settings.json') });
   }
-  candidates.push({ scope: 'user', file: USER_SETTINGS });
+  candidates.push({ scope: 'user', file: userFile });
   return candidates;
 }
 
@@ -117,6 +117,33 @@ export function lookup(layers, key) {
   for (const layer of layers) {
     if (Object.prototype.hasOwnProperty.call(layer.data, key)) {
       return { value: layer.data[key], scope: layer.scope, file: layer.file };
+    }
+  }
+  return null;
+}
+
+/**
+ * Read a nested key out of one settings object, without ever inventing a level
+ * that is not there. `env` in particular is routinely a string or absent in a
+ * hand-edited file, and descending into it blindly would throw where the
+ * documented behaviour is simply that the layer does not set the key.
+ */
+export function readPath(data, keyPath) {
+  let current = data;
+  for (const key of keyPath) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(current, key)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+/** `lookup` for a nested key, such as ['env', 'CLAUDE_CODE_SUBAGENT_MODEL']. */
+export function lookupPath(layers, keyPath) {
+  for (const layer of layers) {
+    const value = readPath(layer.data, keyPath);
+    if (value !== undefined) {
+      return { value, scope: layer.scope, file: layer.file };
     }
   }
   return null;

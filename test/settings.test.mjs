@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import {
   autoMemoryState,
+  lookupPath,
+  readPath,
   cleanupPeriodDays,
   managedSettingsFiles,
   resolveMemoryDirectory,
@@ -207,4 +209,35 @@ test('an unusable autoMemoryDirectory reaches the report as a problem', { skip: 
     assert.ok(problem);
     assert.match(problem.detail, /relative\/store/);
   });
+});
+
+
+// env is routinely a string, or absent, in a hand-edited settings file. Reading
+// it as an object either way would throw where the documented behaviour is just
+// that the layer does not set the key.
+test('a nested key is read only through layers that really nest', () => {
+  const layers = [
+    { scope: 'local', file: 'a', data: { env: 'nonsense' } },
+    { scope: 'project', file: 'b', data: { env: null } },
+    { scope: 'user', file: 'c', data: { env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' } } },
+  ];
+
+  assert.deepEqual(lookupPath(layers, ['env', 'CLAUDE_CODE_SUBAGENT_MODEL']), {
+    value: 'haiku',
+    scope: 'user',
+    file: 'c',
+  });
+  assert.equal(lookupPath(layers, ['env', 'NOT_SET']), null);
+  assert.equal(lookupPath([], ['env', 'X']), null);
+});
+
+test('a key set to a falsy value still counts as set', () => {
+  const layers = [{ scope: 'user', file: 'c', data: { env: { X: '' } } }];
+  assert.equal(lookupPath(layers, ['env', 'X']).value, '');
+});
+
+test('reading a path never walks into an array or an inherited property', () => {
+  assert.equal(readPath({ env: ['a'] }, ['env', '0']), undefined);
+  assert.equal(readPath({}, ['toString']), undefined);
+  assert.equal(readPath({ a: { b: 1 } }, ['a', 'b']), 1);
 });
