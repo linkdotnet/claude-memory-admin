@@ -1,6 +1,6 @@
 {
   "name": "claude-memory-admin",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "Browse, audit and prune the auto memory Claude Code keeps under ~/.claude/projects",
   "keywords": [
     "claude",
