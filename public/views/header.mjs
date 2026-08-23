@@ -41,7 +41,7 @@ function segmentVisible(tab, segment, store) {
   }
   if (segment === 'instructions') return global || hasProjectDir(store);
   if (segment === 'cost') return global;
-  if (segment === 'tools') return state.tools.some((tool) => tool.found);
+  if (segment === 'tools') return state.tools.length > 0;
   if (global) return false;
   if (segment === 'sessions') return Boolean(store.sessions?.count);
   return true;

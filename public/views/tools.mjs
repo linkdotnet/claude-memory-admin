@@ -15,6 +15,7 @@ const PANELS = {
 };
 
 const installed = () => state.tools.filter((tool) => tool.found && PANELS[tool.id]);
+const missing = () => state.tools.filter((tool) => !tool.found && PANELS[tool.id]);
 
 const openKey = (id) => `toolOpen:${id}`;
 const isOpen = (id) => localStorage.getItem(openKey(id)) === '1';
@@ -126,19 +127,46 @@ function accordion(container, tool, slot) {
   container.append(panel);
 }
 
-export function renderTools(container) {
-  const tools = installed();
-  if (!tools.length) return;
-
-  if (!state.aux.tools && localStorage.getItem(OPT_IN) === '1') start({ remember: false });
-  if (!state.aux.tools) return gate(container, tools);
-
-  container.append(node('div', { class: ui.listBar }, [
-    node('span', { class: ui.sectionLabelInline, text: 'Companion tools' }),
-    node('span', { class: ui.listSpacer }),
-    node('button', { class: ui.buttonSmall, text: 'Re-read', onclick: readAll }),
-    node('button', { class: ui.buttonSmall, text: 'Turn off', onclick: turnOff }),
+function notInstalled(container, tool) {
+  container.append(node('div', { class: ui.contextRowStatic }, [
+    node('div', { class: ui.contextMain }, [
+      node('div', { class: ui.contextFile, text: tool.label }),
+    ]),
+    node('div', { class: ui.contextSize, text: 'not installed' }),
   ]));
 
-  for (const tool of tools) accordion(container, tool, state.aux.tools[tool.id]);
+  container.append(node('div', { class: ui.toolMissingBody }, [
+    node('p', { class: ui.noteTight, text: tool.blurb }),
+    node('a', {
+      class: ui.linkButton,
+      href: tool.repo,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      text: 'View on GitHub \u2197',
+    }),
+  ]));
+}
+
+export function renderTools(container) {
+  const found = installed();
+  const absent = missing();
+  if (!found.length && !absent.length) return;
+
+  if (found.length && !state.aux.tools && localStorage.getItem(OPT_IN) === '1') start({ remember: false });
+  const opted = Boolean(state.aux.tools);
+
+  const bar = [
+    node('span', { class: ui.sectionLabelInline, text: 'Companion tools' }),
+    node('span', { class: ui.listSpacer }),
+  ];
+  if (found.length && opted) {
+    bar.push(node('button', { class: ui.buttonSmall, text: 'Re-read', onclick: readAll }));
+    bar.push(node('button', { class: ui.buttonSmall, text: 'Turn off', onclick: turnOff }));
+  }
+  container.append(node('div', { class: ui.listBar }, bar));
+
+  if (found.length && !opted) gate(container, found);
+  else for (const tool of found) accordion(container, tool, state.aux.tools[tool.id]);
+
+  for (const tool of absent) notInstalled(container, tool);
 }

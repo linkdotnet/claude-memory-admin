@@ -122,6 +122,13 @@ test('no view or dialog module grows back into a second app.mjs', () => {
   assert.deepEqual(oversized, [], `split these up: ${JSON.stringify(oversized)}`);
 });
 
+test('a companion tool that is not installed still points at its repo', () => {
+  const tools = read('public/views/tools.mjs');
+  assert.match(tools, /tool\.repo/);
+  assert.match(tools, /tool\.blurb/);
+  assert.doesNotMatch(read('public/views/header.mjs'), /segment === 'tools'\) return state\.tools\.some/);
+});
+
 test('a false boolean prop leaves the attribute off rather than setting it to "false"', () => {
   const source = read('public/dom.mjs');
   assert.match(source, /value === false/);
