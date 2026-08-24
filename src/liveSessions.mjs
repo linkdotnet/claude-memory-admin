@@ -4,8 +4,9 @@
 // happening right now.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+
+import { configPath } from './config.mjs';
 
 function isAlive(pid) {
   try {
@@ -21,7 +22,7 @@ function isAlive(pid) {
  * left behind by a process that has since exited is silently skipped rather
  * than reported as stale - the registry itself is not this app's to clean up.
  */
-export function readLiveSessions({ dir = path.join(os.homedir(), '.claude', 'sessions') } = {}) {
+export function readLiveSessions({ dir = configPath('sessions') } = {}) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });

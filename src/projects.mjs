@@ -14,12 +14,12 @@
 // and the repository root preferred as the store's identity.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { configPath, configSource, fixedProjectDirName } from './config.mjs';
 import { rememberedPath } from './pathcache.mjs';
 import { autoMemoryState, expandHome, resolveMemoryDirectory } from './settings.mjs';
 
-export const DEFAULT_ROOT = path.join(os.homedir(), '.claude', 'projects');
+export const DEFAULT_ROOT = configPath('projects');
 
 /**
  * Which store to read, and what decided it. The source travels with the path so
@@ -44,7 +44,24 @@ export function resolveRoot() {
       invalid: `autoMemoryDirectory "${configured.raw}" is ${configured.invalid}`,
     };
   }
-  return { path: DEFAULT_ROOT, source: 'default', file: null, invalid: null };
+  // CLAUDE_CONFIG_DIR moved the whole config directory, so DEFAULT_ROOT is
+  // already inside it. Naming that as the source keeps the UI from claiming a
+  // default location the user never used.
+  const config = configSource();
+  if (config.source === 'env') {
+    return { path: DEFAULT_ROOT, source: 'config-dir', file: null, invalid: config.invalid };
+  }
+  return { path: DEFAULT_ROOT, source: 'default', file: null, invalid: config.invalid };
+}
+
+/**
+ * The one project directory every repository shares when
+ * CLAUDE_CODE_PROJECT_DIR_NAME is set, or null when each repository gets a slug
+ * of its own. Callers use it to explain why one row stands for several
+ * repositories rather than to change how the row is read.
+ */
+export function fixedProjectDir() {
+  return fixedProjectDirName();
 }
 
 export function projectsRoot() {
@@ -180,12 +197,29 @@ export function storeIdentity(cwds) {
  * Candidates are verified against the filesystem so a wrong guess is reported
  * as unresolved rather than presented as fact.
  */
-function decodeSlug(slug) {
+export function slugCandidates(slug, platform = process.platform) {
+  // A Windows cwd slugifies with its drive in front ("C--Users-me-repo"), so the
+  // POSIX candidates below decode it to a path with no drive and no meaning.
+  if (platform === 'win32') {
+    const drive = /^([A-Za-z])--(.*)$/.exec(slug);
+    if (drive) {
+      const [, letter, rest] = drive;
+      return [
+        `${letter}:\\` + rest.replace(/--/g, '\\.').replace(/-/g, '\\'),
+        `${letter}:\\` + rest.replace(/-/g, '\\'),
+      ];
+    }
+  }
+
   const body = slug.replace(/^-/, '');
-  const candidates = [
+  return [
     '/' + body.replace(/--/g, '/.').replace(/-/g, '/'),
     '/' + body.replace(/-/g, '/'),
   ];
+}
+
+function decodeSlug(slug) {
+  const candidates = slugCandidates(slug);
   for (const candidate of candidates) {
     try {
       if (fs.existsSync(candidate)) return { path: candidate, verified: true };
@@ -223,7 +257,10 @@ export function resolveProjectPath(dir, slug) {
 
 /** A short label for the sidebar: the last two path segments. */
 export function shortLabel(fullPath) {
-  const parts = fullPath.split('/').filter(Boolean);
+  // Split on both separators: a store recorded on Windows is still browsed on
+  // whatever machine is reading it, and a backslash path would otherwise come
+  // out as one unsplittable segment.
+  const parts = String(fullPath).split(/[\\/]+/).filter(Boolean);
   return parts.slice(-2).join('/') || fullPath;
 }
 

@@ -18,7 +18,36 @@ const AGENT_PROBLEMS = {
   'name-mismatch': 'Name and filename disagree',
   'unknown-model': 'Unrecognised model',
   'unknown-effort': 'Unrecognised effort',
+  'unknown-memory-scope': 'Unrecognised memory scope',
 };
+
+function memoryLine(agent, stores) {
+  if (!agent.memory) {
+    const stale = stores.filter((store) => store.agentName === agent.name && !store.linked);
+    if (!stale.length) return null;
+    return node('div', { class: ui.agentTools }, [
+      node('span', { class: ui.badge('warn'), text: 'no memory:' }),
+      node('span', {
+        text: ` this agent declares no memory scope, but ${stale.length === 1 ? 'a directory it once wrote' : `${stale.length} directories it once wrote`} ${stale.length === 1 ? 'is' : 'are'} still on disk and nothing loads ${stale.length === 1 ? 'it' : 'them'}.`,
+      }),
+    ]);
+  }
+
+  const mine = stores.filter((store) => store.agentName === agent.name && store.linked);
+  const inert = mine.some((store) => store.inert);
+  const count = mine.reduce((sum, store) => sum + store.memoryCount, 0);
+
+  const parts = [
+    node('span', { class: ui.scopeBadge(agent.memory), text: `memory: ${agent.memory}` }),
+  ];
+  if (inert) parts.push(node('span', { class: ui.badge('warn'), text: 'inert' }));
+  parts.push(node('span', {
+    text: mine.length
+      ? ` ${count} ${count === 1 ? 'memory' : 'memories'} in ${mine.length === 1 ? 'its store' : `${mine.length} stores`}${inert ? ', frozen while auto memory is off' : ''}.`
+      : ' no store yet - the directory appears the first time it saves something.',
+  }));
+  return node('div', { class: ui.agentTools }, parts);
+}
 
 const show = (value) => (value === undefined || value === null ? 'unset' : JSON.stringify(value));
 
@@ -79,7 +108,12 @@ async function saveAgent(file, field, value) {
       body: JSON.stringify({ file, field, value }),
     });
     if (state.storeId !== id) return;
-    state.aux.cost = { ...state.aux.cost, agents: data.agents, agentsDirExists: data.agentsDirExists };
+    state.aux.cost = {
+      ...state.aux.cost,
+      agents: data.agents,
+      agentsDirExists: data.agentsDirExists,
+      agentStores: data.agentStores,
+    };
     toast(value === null ? `Cleared ${field} in ${file}` : `${file}: ${field} = ${value}`);
   } catch (err) {
     toast(err.message, { error: true });
@@ -138,21 +172,30 @@ function settingCard(entry, writable) {
   return card;
 }
 
-function agentRow(agent, fields) {
+function agentRow(agent, fields, stores) {
   const row = node('div', { class: ui.agentRow });
 
-  row.append(node('div', { class: ui.agentTop }, [
+  const top = [
     node('span', { class: ui.agentName, text: agent.name }),
-    node('span', { class: ui.agentFile, text: agent.file }),
-  ]));
+    node('span', { class: ui.agentFile, text: agent.projectPath ? `${agent.projectPath}/.claude/agents/${agent.file}` : agent.file }),
+  ];
+  if (agent.scope === 'project') top.push(node('span', { class: ui.scopeBadge('project'), text: 'project' }));
+  row.append(node('div', { class: ui.agentTop }, top));
 
   if (agent.description) row.append(node('p', { class: ui.agentDesc, text: agent.description }));
   if (agent.tools) row.append(node('div', { class: ui.agentTools, text: `tools: ${agent.tools}` }));
 
-  row.append(node('div', { class: ui.agentControls }, [
-    labelled('model', picker(fields.model.options, agent.model, (value) => saveAgent(agent.file, 'model', value))),
-    labelled('effort', picker(fields.effort.options, agent.effort, (value) => saveAgent(agent.file, 'effort', value))),
-  ]));
+  const memory = memoryLine(agent, stores);
+  if (memory) row.append(memory);
+
+  if (agent.writable) {
+    row.append(node('div', { class: ui.agentControls }, [
+      labelled('model', picker(fields.model.options, agent.model, (value) => saveAgent(agent.file, 'model', value))),
+      labelled('effort', picker(fields.effort.options, agent.effort, (value) => saveAgent(agent.file, 'effort', value))),
+    ]));
+  } else {
+    row.append(node('div', { class: ui.agentTools, text: `model: ${agent.model || 'inherit'}, effort: ${agent.effort || 'default'} - read-only, this file lives in a repository.` }));
+  }
 
   for (const problem of agent.problems) {
     row.append(issue(
@@ -181,7 +224,7 @@ function agentsCard(data) {
     return card;
   }
 
-  for (const agent of data.agents) card.append(agentRow(agent, data.agentFields));
+  for (const agent of data.agents) card.append(agentRow(agent, data.agentFields, data.agentStores || []));
   return card;
 }
 

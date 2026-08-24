@@ -15,7 +15,7 @@ import { parseIndex, parseFrontmatter, extractWikilinks } from './parse.mjs';
 import { listMemoryFiles, memoryDir, resolveProjectPath, shortLabel } from './projects.mjs';
 import { autoMemoryState } from './settings.mjs';
 import { ageInDays, estimateTokens, findDuplicates, indexStats } from './stats.mjs';
-import { memoryChecks, sessionChecks } from './checks.mjs';
+import { agentStoreChecks, memoryChecks, sessionChecks } from './checks.mjs';
 import { listSessions, originSession, retention, transcriptDir } from './sessions.mjs';
 import { rememberedPath } from './pathcache.mjs';
 
@@ -198,6 +198,7 @@ export function buildStore(store) {
     ...(health.longHooks.length
       ? [{ kind: 'long-hooks', severity: 'warn', count: health.longHooks.length, longest: health.longHooks[0] }]
       : []),
+    ...agentStoreChecks(store),
     ...memoryChecks(memories, index),
     ...sessionChecks(store, memories, sessions.retention, {
       remembered: sessions.remembered,

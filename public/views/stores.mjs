@@ -11,6 +11,26 @@ function storeSubtitle(store) {
   return `${scope} · ${store.sublabel}`;
 }
 
+function agentMarker(store) {
+  if (!String(store.kind).startsWith('agent-') || !store.linkage) return null;
+  if (store.inert) {
+    return { text: 'inert', title: `Auto memory is off${store.inertBy ? ` (${store.inertBy})` : ''}, so the memory: field has no effect and this store is frozen.` };
+  }
+  if (store.linked) return null;
+  if (store.declaredScope) {
+    return {
+      text: 'moved',
+      title: `${store.agentName} now declares memory: ${store.declaredScope}, so the live store is elsewhere and this one is stale.`,
+    };
+  }
+  return {
+    text: 'orphan',
+    title: store.defined
+      ? `${store.agentName} exists but declares no memory: field any more, so nothing loads this store.`
+      : `No agent named ${store.agentName} was found in any scope, so nothing loads this store.`,
+  };
+}
+
 function issueTitle(store) {
   const parts = [];
   if (store.issueCount) parts.push(`${store.issueCount} to fix in Cleanup`);
@@ -32,6 +52,7 @@ function storeButton(store) {
   const global = store.kind === 'global';
   const health = !global && !store.hasMemoryDir ? 'none' : store.severity || 'ok';
   const off = store.autoMemory && store.autoMemory.known && !store.autoMemory.enabled;
+  const marker = agentMarker(store);
   const active = state.activeSessions.filter((s) => s.storeId === store.id);
   return node('button', {
     class: ui.storeItem({ active: store.id === state.storeId, empty: !global && !store.hasMemoryDir }),
@@ -43,6 +64,7 @@ function storeButton(store) {
       node('span', { class: ui.storeName, text: store.label }),
       active.length ? node('span', { class: ui.dot('ok'), title: activeTitle(active) }) : null,
       off ? node('span', { class: ui.offMarker, text: 'off', title: 'Auto memory is disabled for this project' }) : null,
+      marker ? node('span', { class: ui.offMarker, text: marker.text, title: marker.title }) : null,
       global ? null : node('span', { class: ui.storeCount, text: store.hasMemoryDir ? String(store.memoryCount) : '-' }),
     ]),
     node('span', { class: ui.storePath, text: storeSubtitle(store) }),

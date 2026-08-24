@@ -3,7 +3,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { toPosix } from '../src/config.mjs';
 import {
+  globToRegExp,
   MAX_IMPORT_DEPTH,
   checkGlob,
   checkGlobList,
@@ -209,4 +211,19 @@ test('a markdown file next to CLAUDE.md that nothing reaches is named', () => {
 test('the per-project view does not report the home directory as broken', () => {
   const { problems } = resolveInstructions(PROJECT);
   assert.ok(!problems.some((p) => p.kind === 'unreferenced-user-file'));
+});
+
+test('an exclude pattern matches a path written with either separator', () => {
+  // Glob syntax knows one separator, so the candidate path is compared in its
+  // forward slash form. Without that every pattern misses on Windows.
+  const re = globToRegExp('**/monorepo/CLAUDE.md');
+  assert.equal(re.test(toPosix('C:\\repos\\monorepo\\CLAUDE.md')), true);
+  assert.equal(re.test('/repos/monorepo/CLAUDE.md'), true);
+  assert.equal(re.test('/repos/other/CLAUDE.md'), false);
+});
+
+test('an exclude pattern is case-sensitive only where the filesystem is', () => {
+  assert.equal(globToRegExp('/Repos/**', 'win32').test('/repos/a/CLAUDE.md'), true);
+  assert.equal(globToRegExp('/Repos/**', 'darwin').test('/repos/a/CLAUDE.md'), true);
+  assert.equal(globToRegExp('/Repos/**', 'linux').test('/repos/a/CLAUDE.md'), false);
 });

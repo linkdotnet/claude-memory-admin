@@ -22,7 +22,12 @@ function candidate(raw) {
   if (token.includes('://') || token.startsWith('@')) return null;
   if (GLOB_OR_SHELL.test(token)) return null;
 
+  // A memory written on Windows quotes its paths with backslashes. The project
+  // index below is keyed on forward slashes, so a token that is not normalised
+  // matches nothing and every Windows-written path is reported as missing.
+  token = token.replace(/\\/g, '/');
   token = token.replace(LINE_SUFFIX, '').replace(/[.,;:]+$/, '').replace(/\/+$/, '');
+  if (/^[A-Za-z]:\//.test(token)) return null;
   if (token.startsWith('./')) token = token.slice(2);
   if (!token || token.startsWith('/') || token.startsWith('~')) return null;
   if (token.split('/').includes('..')) return null;

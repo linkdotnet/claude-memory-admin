@@ -2,6 +2,13 @@ import path from 'node:path';
 import { parseFrontmatter } from './parse.mjs';
 
 export const VALID_TYPES = ['user', 'feedback', 'project', 'reference'];
+
+/** The scope each subagent store kind stands for, for the messages below. */
+const STORE_SCOPES = {
+  'agent-user': 'user',
+  'agent-project': 'project',
+  'agent-local': 'local',
+};
 export const EMPTY_BODY_CHARS = 40;
 export const EMPTY_INSTRUCTION_CHARS = 10;
 export const HOOK_ECHO_OVERLAP = 0.9;
@@ -216,6 +223,68 @@ export function checkNoMemoryDespiteSessions(store, memories, retention) {
     sessionCount: retention.count,
     retentionDays: retention.days,
   }];
+}
+
+/**
+ * A subagent store nothing declares any more.
+ *
+ * The directory only exists because some agent file once carried a `memory:`
+ * field naming this scope. Rename the agent, move it to another scope or drop
+ * the field and the directory stays exactly where it is, still holding whatever
+ * it learned, and no session will ever read it again. That is invisible on disk,
+ * which is the whole reason to say it here.
+ */
+export function checkAgentStoreOrphan(store) {
+  if (!store || !store.linkage || store.linked) return [];
+  if (store.declaredScope) return [];
+
+  return [{
+    kind: 'agent-store-orphan',
+    severity: 'warn',
+    agentName: store.agentName,
+    scope: STORE_SCOPES[store.kind] || null,
+    defined: Boolean(store.defined),
+  }];
+}
+
+/** The agent still exists, but its `memory:` names a different scope than this store. */
+export function checkAgentStoreScopeMismatch(store) {
+  if (!store || !store.linkage || store.linked) return [];
+  if (!store.declaredScope) return [];
+
+  return [{
+    kind: 'agent-store-scope-mismatch',
+    severity: 'warn',
+    agentName: store.agentName,
+    scope: STORE_SCOPES[store.kind] || null,
+    declaredScope: store.declaredScope,
+    declaredBy: store.declaredBy,
+  }];
+}
+
+/**
+ * Subagent memory is part of auto memory, so turning auto memory off turns this
+ * store off with it: the `memory:` field stops having any effect, the agent
+ * launches with no memory instructions and no file tools, and the directory can
+ * neither be read nor grow. Nothing about the files themselves shows that.
+ */
+export function checkAgentMemoryInert(store) {
+  if (!store || !store.linkage || !store.inert) return [];
+
+  return [{
+    kind: 'agent-memory-inert',
+    severity: 'warn',
+    agentName: store.agentName,
+    setBy: store.inertBy || null,
+  }];
+}
+
+export function agentStoreChecks(store) {
+  return [
+    ...checkAgentMemoryInert(store),
+    ...checkAgentStoreOrphan(store),
+    ...checkAgentStoreScopeMismatch(store),
+  ];
 }
 
 export function sessionChecks(store, memories, retention, { remembered = false, resolveOrigin = null } = {}) {

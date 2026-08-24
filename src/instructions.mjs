@@ -13,8 +13,8 @@
 // would hide exactly the problem this is meant to surface.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { canonicalPath, configDir, DEFAULT_CONFIG_DIR_NAME, expandHome, toPosix } from './config.mjs';
 import { parseFrontmatter } from './parse.mjs';
 import { estimateTokens } from './stats.mjs';
 import { lookup, settingsLayers } from './settings.mjs';
@@ -133,7 +133,7 @@ export function findImports(text) {
 }
 
 function resolveImport(spec, fromFile) {
-  if (spec.startsWith('~/')) return path.join(os.homedir(), spec.slice(2));
+  if (spec.startsWith('~/') || spec.startsWith('~\\')) return expandHome(spec);
   if (path.isAbsolute(spec)) return spec;
   // Relative to the file holding the import, not to the working directory.
   return path.resolve(path.dirname(fromFile), spec);
@@ -149,7 +149,10 @@ function resolveImport(spec, fromFile) {
 export function expandImports(rootFile, rootText, { projectDir = null } = {}) {
   const files = [];
   const problems = [];
-  const seen = new Set([rootFile]);
+  // Canonical keys: on a case-insensitive filesystem two spellings of one file
+  // are one file, and a cycle spelled differently at each hop would otherwise
+  // recurse until it hit the depth limit instead of being named as a cycle.
+  const seen = new Set([canonicalPath(rootFile)]);
   let frontier = [{ file: rootFile, text: rootText, depth: 0 }];
 
   while (frontier.length) {
@@ -162,7 +165,7 @@ export function expandImports(rootFile, rootText, { projectDir = null } = {}) {
           problems.push({ kind: 'too-deep', spec, from: current.file, file: resolved });
           continue;
         }
-        if (seen.has(resolved)) {
+        if (seen.has(canonicalPath(resolved))) {
           problems.push({ kind: 'cycle', spec, from: current.file, file: resolved });
           continue;
         }
@@ -173,7 +176,7 @@ export function expandImports(rootFile, rootText, { projectDir = null } = {}) {
           continue;
         }
 
-        seen.add(resolved);
+        seen.add(canonicalPath(resolved));
         // An import resolving outside the project is the kind Claude Code asks
         // you to approve once; a declined one then stays silently disabled.
         const external = projectDir ? path.relative(projectDir, resolved).startsWith('..') : false;
@@ -342,17 +345,34 @@ function entry(file, scope, kind, { conditional = false } = {}) {
 }
 
 /** Directories from the filesystem root down to `dir`, in load order. */
+/**
+ * Every directory from the filesystem root down to `dir`, root last.
+ *
+ * Walked with dirname rather than by splitting on the separator, because the
+ * separator alone does not describe a root: a Windows path starts at `C:\` and
+ * a UNC path at `\\server\share`, and splitting either of those produces
+ * candidates that name nothing.
+ */
 function ancestors(dir) {
-  const parts = path.resolve(dir).split(path.sep);
   const out = [];
-  for (let i = 1; i < parts.length; i++) {
-    out.push(parts.slice(0, i + 1).join(path.sep) || path.sep);
+  let current = path.resolve(dir);
+  while (true) {
+    out.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
-  return out;
+  return out.reverse();
 }
 
-function globToRegExp(pattern) {
-  // Only used for claudeMdExcludes, which matches absolute paths.
+export function globToRegExp(pattern, platform = process.platform) {
+  // Only used for claudeMdExcludes, which matches absolute paths. Glob syntax
+  // knows one separator, so a Windows path has to be compared in its forward
+  // slash form or every pattern silently matches nothing - and on the two
+  // case-insensitive platforms the comparison has to ignore case for the same
+  // reason a path does.
+  const flags = platform === 'win32' || platform === 'darwin' ? 'i' : '';
+  pattern = toPosix(pattern);
   let out = '';
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
@@ -362,16 +382,26 @@ function globToRegExp(pattern) {
     } else if (char === '?') out += '[^/]';
     else out += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
-  return new RegExp(`^${out}$`);
+  return new RegExp(`^${out}$`, flags);
 }
 
 /**
  * Managed policy and user scope: what loads whichever project a session starts in.
  *
- * `home` is a parameter rather than a call to os.homedir() so this is a total
+ * `home` is a parameter rather than a read of the config directory so this is a total
  * function of where it is told to look, which is what makes it testable without a
  * real home directory.
  */
+/**
+ * The user-scope directory: normally the config directory, which
+ * CLAUDE_CONFIG_DIR may have moved off the home directory entirely. A `home`
+ * passed in names its own, which is what lets the tests point the user scope at
+ * a fixture.
+ */
+function userDir(home) {
+  return home ? path.join(home, DEFAULT_CONFIG_DIR_NAME) : configDir();
+}
+
 function userCandidates(home, layers) {
   const candidates = [entry(managedClaudeMd(), 'managed', 'claude-md')];
 
@@ -382,8 +412,9 @@ function userCandidates(home, layers) {
     : null;
   if (inline) candidates.push(inline);
 
-  candidates.push(entry(path.join(home, '.claude', 'CLAUDE.md'), 'user', 'claude-md'));
-  for (const file of listRuleFiles(path.join(home, '.claude', 'rules'))) {
+  const dir = userDir(home);
+  candidates.push(entry(path.join(dir, 'CLAUDE.md'), 'user', 'claude-md'));
+  for (const file of listRuleFiles(path.join(dir, 'rules'))) {
     candidates.push(ruleEntry(file, 'user'));
   }
   return candidates;
@@ -416,14 +447,14 @@ function readExcludes(layers) {
  * one cannot drift apart in what they count or what they consider broken.
  */
 function finalize(candidates, { projectDir, excludes }) {
-  const matchers = excludes.map(globToRegExp);
+  const matchers = excludes.map((pattern) => globToRegExp(pattern));
   const excluded = [];
   const loaded = [];
   const problems = [];
 
   for (const candidate of candidates.filter(Boolean)) {
     // Managed policy cannot be excluded; that is the point of managed policy.
-    if (candidate.scope !== 'managed' && matchers.some((re) => re.test(candidate.file))) {
+    if (candidate.scope !== 'managed' && matchers.some((re) => re.test(toPosix(candidate.file)))) {
       excluded.push(candidate.file);
       continue;
     }
@@ -498,7 +529,7 @@ function finalize(candidates, { projectDir, excludes }) {
  * and walking into them would bury the one finding that matters.
  */
 export function unreferencedUserFiles(home, loadedFiles) {
-  const dir = path.join(home, '.claude');
+  const dir = userDir(home);
   // Imports arrive already absolutised by resolveImport while candidates are
   // joined from `home`, so both sides are resolved before they are compared.
   const loaded = new Set(loadedFiles.map((item) => path.resolve(item.file)));
@@ -526,7 +557,7 @@ export function unreferencedUserFiles(home, loadedFiles) {
 export function resolveInstructions(projectDir) {
   const layers = settingsLayers({ projectDir });
   const candidates = [
-    ...userCandidates(os.homedir(), layers),
+    ...userCandidates(null, layers),
     ...projectCandidates(projectDir),
   ];
   const resolved = finalize(candidates, { projectDir, excludes: readExcludes(layers) });
@@ -552,7 +583,7 @@ export function resolveInstructions(projectDir) {
  * With no project there is no boundary for an import to resolve outside of, so
  * nothing is marked external here - that check belongs to the whole-session view.
  */
-export function resolveGlobalInstructions({ home = os.homedir(), settingsFile = null } = {}) {
+export function resolveGlobalInstructions({ home = null, settingsFile = null } = {}) {
   const layers = settingsLayers(settingsFile ? { settingsFile } : {});
   const resolved = finalize(userCandidates(home, layers), { projectDir: null, excludes: readExcludes(layers) });
   resolved.problems.push(...unreferencedUserFiles(home, resolved.files));

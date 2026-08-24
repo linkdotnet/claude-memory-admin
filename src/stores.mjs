@@ -15,11 +15,13 @@
 // somewhere else first.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { listAllAgents, MEMORY_SCOPES } from './agents.mjs';
+import { canonicalPath, configDir, configPath, DEFAULT_CONFIG_DIR_NAME } from './config.mjs';
 import { listProjects, memoryDir, projectsRoot, shortLabel } from './projects.mjs';
+import { autoMemoryState } from './settings.mjs';
 
-export const AGENT_USER_DIR = path.join(os.homedir(), '.claude', 'agent-memory');
+export const AGENT_USER_DIR = configPath('agent-memory');
 export const AGENT_PROJECT_DIR = path.join('.claude', 'agent-memory');
 export const AGENT_LOCAL_DIR = path.join('.claude', 'agent-memory-local');
 
@@ -96,10 +98,15 @@ export function listAgentStores({ userDir = AGENT_USER_DIR, projectPaths = [] } 
 
   // A repository can be reached through more than one project entry (a worktree
   // and its root), so the same directory must not be listed twice.
+  // Keyed on the canonical form: Windows and a default macOS volume are
+  // case-insensitive, so two spellings of one repository are one repository and
+  // would otherwise contribute the same agent store twice.
   const seen = new Set();
   for (const projectPath of projectPaths) {
-    if (!projectPath || !path.isAbsolute(projectPath) || seen.has(projectPath)) continue;
-    seen.add(projectPath);
+    if (!projectPath || !path.isAbsolute(projectPath)) continue;
+    const key = canonicalPath(projectPath);
+    if (seen.has(key)) continue;
+    seen.add(key);
     for (const [kind, relative] of [['agent-project', AGENT_PROJECT_DIR], ['agent-local', AGENT_LOCAL_DIR]]) {
       const parent = path.join(projectPath, relative);
       for (const name of agentDirs(parent)) {
@@ -111,6 +118,60 @@ export function listAgentStores({ userDir = AGENT_USER_DIR, projectPaths = [] } 
   return stores.sort((a, b) => b.memoryCount - a.memoryCount
     || a.label.localeCompare(b.label)
     || a.sublabel.localeCompare(b.sublabel));
+}
+
+/**
+ * Join each subagent store to the definition that asks for it.
+ *
+ * A store directory on its own says nothing about whether a session still loads
+ * it: the `memory:` field in an agent file is what creates one, and that field
+ * can be changed to another scope or removed entirely without the directory it
+ * created ever going away. So the store is annotated with what the definitions
+ * actually say, and the cleanup checks in src/checks.mjs read those annotations
+ * rather than re-deriving them.
+ *
+ * The one rule that outranks all of it: subagent memory is part of auto memory,
+ * so when auto memory is off the `memory:` field has no effect at all - the
+ * agent launches with no memory instructions and no file tools, and every store
+ * on the machine is frozen where it stands.
+ */
+export function linkAgentStores(stores, agents, { autoMemory = null } = {}) {
+  const byName = new Map();
+  for (const agent of agents || []) {
+    const key = agent.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(agent);
+  }
+
+  return stores.map((store) => {
+    if (!store.kind.startsWith('agent-')) return store;
+
+    const candidates = (byName.get(store.agentName.toLowerCase()) || []).filter((agent) => {
+      // A project-scope definition only speaks for stores in its own repository.
+      if (agent.scope !== 'project' || !store.projectPath) return true;
+      return canonicalPath(agent.projectPath) === canonicalPath(store.projectPath);
+    });
+
+    const declaring = candidates.find((agent) => MEMORY_SCOPES[agent.memory] === store.kind) || null;
+    const other = declaring ? null : candidates.find((agent) => agent.memory) || null;
+    const inert = autoMemory ? autoMemory.enabled === false : false;
+
+    return {
+      ...store,
+      // Marks that the join actually ran. A store that was never linked knows
+      // nothing about its definitions, and "nothing is declared" and "nobody
+      // asked" have to stay distinguishable or the checks below report an
+      // orphan every time a caller builds a store on its own.
+      linkage: true,
+      declaredBy: declaring ? declaring.file : other ? other.file : null,
+      declaredScope: declaring ? declaring.memory : other ? other.memory : null,
+      declaringScope: declaring ? declaring.scope : other ? other.scope : null,
+      defined: candidates.length > 0,
+      linked: Boolean(declaring),
+      inert,
+      inertBy: inert ? autoMemory.setBy : null,
+    };
+  });
 }
 
 /** An auto-memory project, in the shape the rest of the app expects of a store. */
@@ -133,8 +194,7 @@ function autoStore(project, root) {
  * `hasMemoryDir` false is what keeps it out of full-text search, which skips
  * stores without one, and out of everything else that reads memory files.
  */
-function globalStore(home) {
-  const dir = path.join(home, '.claude');
+function globalStore(dir) {
   return {
     id: storeId('global', dir),
     kind: 'global',
@@ -154,19 +214,26 @@ function globalStore(home) {
  * found under the project paths auto memory already resolved, so a repository this
  * tool has never seen a session for contributes nothing.
  *
- * `home` is a parameter because the global entry is about the real home directory
- * rather than the memory root, which --root can point somewhere else entirely.
+ * The config directory is a parameter because the global entry is about where
+ * Claude Code keeps its own files rather than about the memory root, which
+ * --root can point somewhere else entirely. `home` is the older spelling of the
+ * same idea and still accepted, since a home directory names exactly one config
+ * directory when CLAUDE_CONFIG_DIR is not set.
  */
-export function listStores(root = projectsRoot(), { home = os.homedir() } = {}) {
+export function listStores(root = projectsRoot(), { home = null, dir = null, agents = null } = {}) {
+  const global = dir || (home ? path.join(home, DEFAULT_CONFIG_DIR_NAME) : configDir());
   const projects = listProjects(root);
   const projectPaths = projects
     .filter((project) => project.pathExists)
     .flatMap((project) => [project.path, ...(project.workingDirs || [])]);
 
+  const agentStores = listAgentStores({ projectPaths });
+  const definitions = agents || listAllAgents({ projectPaths });
+
   return [
-    globalStore(home),
+    globalStore(global),
     ...projects.map((project) => autoStore(project, root)),
-    ...listAgentStores({ projectPaths }),
+    ...linkAgentStores(agentStores, definitions, { autoMemory: autoMemoryState() }),
   ];
 }
 

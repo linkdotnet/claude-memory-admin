@@ -258,5 +258,29 @@ export function renderIssue(item, memories) {
     );
   }
 
+  if (item.kind === 'agent-memory-inert') {
+    return issue(
+      'Auto memory is off, so this store is frozen',
+      `subagent memory is part of auto memory${item.setBy ? `, and ${item.setBy} turns it off` : ' and it is turned off'}. The memory: field on ${item.agentName} has no effect while that is the case: the agent starts with no memory instructions and no file tools, so nothing here is read and nothing new is written.`,
+      { bad },
+    );
+  }
+
+  if (item.kind === 'agent-store-orphan') {
+    return issue(
+      'Nothing declares this store any more',
+      `${item.defined ? `${item.agentName} exists but no longer carries a memory: field` : `no agent named ${item.agentName} was found in any scope`}. A store is created by that field and outlives it, so this directory is still holding what it learned and no session will read it again.`,
+      { bad },
+    );
+  }
+
+  if (item.kind === 'agent-store-scope-mismatch') {
+    return issue(
+      `${item.agentName} keeps its memory in the ${item.declaredScope} scope now`,
+      `this store is the ${item.scope} one${item.declaredBy ? `, but ${item.declaredBy} declares memory: ${item.declaredScope}` : ''}. The live store is the ${item.declaredScope} one; this is what the agent wrote before the field changed.`,
+      { bad },
+    );
+  }
+
   return issue(item.kind, JSON.stringify(item));
 }

@@ -10,7 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { listAgents, agentsDirExists, rewriteAgentField, setAgentField } from '../src/agents.mjs';
+import { listAgents, listAllAgents, listProjectAgents, agentsDirExists, rewriteAgentField, setAgentField } from '../src/agents.mjs';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 function withAgents(files, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-admin-agents-'));
@@ -194,4 +197,58 @@ test('agents are listed by name, and dotfiles are skipped', () => {
   }, (dir) => {
     assert.deepEqual(listAgents({ dir }).map((a) => a.name), ['reviewer', 'summariser']);
   });
+});
+
+const DEFINITIONS = path.join(here, 'fixtures', 'agents', 'definitions');
+const AGENT_REPO = path.join(here, 'fixtures', 'agents', 'repo');
+
+test('the memory scope is read off the frontmatter', () => {
+  const agents = listAgents({ dir: DEFINITIONS });
+  const byName = Object.fromEntries(agents.map((agent) => [agent.name, agent]));
+  assert.equal(byName['code-reviewer'].memory, 'user');
+  assert.equal(byName.scratch.memory, 'project');
+  assert.equal(byName.forgetful.memory, null);
+});
+
+test('agents in subfolders are found, and are not rewritable', () => {
+  const nested = listAgents({ dir: DEFINITIONS }).find((agent) => agent.name === 'bad-scope');
+  assert.equal(nested.file, 'nested/bad-scope.md');
+  assert.equal(nested.writable, false);
+  // A top-level file in the user directory is the one shape writes accept.
+  assert.equal(listAgents({ dir: DEFINITIONS }).find((a) => a.name === 'forgetful').writable, true);
+});
+
+test('a memory scope that is not one of the three is flagged', () => {
+  const nested = listAgents({ dir: DEFINITIONS }).find((agent) => agent.name === 'bad-scope');
+  assert.deepEqual(nested.problems.map((p) => p.kind), ['unknown-memory-scope']);
+  // The raw value is kept so the message can quote it, but it names no store.
+  assert.equal(nested.memory, null);
+  assert.equal(nested.memoryRaw, 'global');
+});
+
+test('project-scope definitions are read but never writable', () => {
+  const agents = listProjectAgents(AGENT_REPO);
+  assert.deepEqual(agents.map((a) => a.name), ['code-reviewer']);
+  assert.equal(agents[0].scope, 'project');
+  assert.equal(agents[0].memory, 'project');
+  assert.equal(agents[0].writable, false);
+  assert.equal(agents[0].projectPath, AGENT_REPO);
+});
+
+test('a relative project path contributes nothing rather than throwing', () => {
+  assert.deepEqual(listProjectAgents('not/absolute'), []);
+  assert.deepEqual(listProjectAgents(null), []);
+});
+
+test('listAllAgents reads a repository once however often it is named', () => {
+  const agents = listAllAgents({ dir: DEFINITIONS, projectPaths: [AGENT_REPO, AGENT_REPO] });
+  assert.equal(agents.filter((a) => a.scope === 'project').length, 1);
+  assert.equal(agents.filter((a) => a.scope === 'user').length, 4);
+});
+
+test('a CRLF agent file keeps its line endings when a field is written', () => {
+  const original = '---\r\nname: a\r\ndescription: d\r\n---\r\n\r\nbody\r\n';
+  const written = rewriteAgentField(original, 'model', 'opus');
+  assert.equal(written, '---\r\nname: a\r\ndescription: d\r\nmodel: opus\r\n---\r\n\r\nbody\r\n');
+  assert.equal(/[^\r]\n/.test(written), false, 'no bare newline is introduced');
 });

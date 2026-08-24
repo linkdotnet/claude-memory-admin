@@ -18,9 +18,9 @@
 //                                   prompt and are untouched by it.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
+import { configPath } from './config.mjs';
 import { parseFrontmatter } from './parse.mjs';
 import { writeFileAtomic } from './mutate.mjs';
 import {
@@ -31,7 +31,7 @@ import {
   settingsCandidates,
 } from './settings.mjs';
 
-export const OUTPUT_STYLES_DIR = path.join(os.homedir(), '.claude', 'output-styles');
+export const OUTPUT_STYLES_DIR = configPath('output-styles');
 
 // A full model name is documented as acceptable wherever an alias is, and this
 // tool has no business deciding which ones exist. The shape is checked so a

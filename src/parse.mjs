@@ -24,6 +24,36 @@ const WIKILINK = /\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g;
 /** Leading hook separator: em dash, en dash, hyphen or colon. */
 const HOOK_SEP = /^[ \t]*(?:—|–|-|:)[ \t]*/;
 
+/**
+ * A line with its carriage return taken off, for matching only.
+ *
+ * Every classifying regex here ends in `$`, and JavaScript's `.` does not match
+ * a carriage return, so on a CRLF file each of them fails on the last character
+ * and the file parses as if it held nothing: no index entries, no frontmatter,
+ * every memory an orphan. Splitting on /\r?\n/ instead would fix the matching
+ * and break the promise that matters more - that a file is rewritten byte for
+ * byte - because it would rewrite a CRLF file as LF. So the return stays on the
+ * stored line and comes off only for the match.
+ */
+export function forMatch(line) {
+  return typeof line === 'string' && line.endsWith('\r') ? line.slice(0, -1) : line;
+}
+
+/**
+ * The carriage return a line added to this file should end with, so a new entry
+ * matches the file it joins rather than making it half one thing and half the
+ * other. Decided by what most of the file already does.
+ */
+export function fileEol(lines) {
+  let crlf = 0;
+  let lf = 0;
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (lines[i].endsWith('\r')) crlf += 1;
+    else lf += 1;
+  }
+  return crlf > lf ? '\r' : '';
+}
+
 function unquote(value) {
   const trimmed = value.trim();
   if (trimmed.length >= 2) {
@@ -50,7 +80,7 @@ function readYaml(lines) {
     const withoutComment = raw.trimStart().startsWith('#') ? '' : raw;
     if (!withoutComment.trim()) continue;
 
-    const match = withoutComment.match(/^([ \t]*)([A-Za-z0-9_.\-]+):[ \t]*(.*)$/);
+    const match = forMatch(withoutComment).match(/^([ \t]*)([A-Za-z0-9_.\-]+):[ \t]*(.*)$/);
     if (!match) continue;
 
     const [, indent, key, rest] = match;
@@ -103,7 +133,7 @@ export function parseFrontmatter(text) {
   return {
     data: readYaml(block),
     raw: block.join('\n'),
-    body: lines.slice(end + 1).join('\n').replace(/^\n+/, ''),
+    body: lines.slice(end + 1).join('\n').replace(/^(?:\r?\n)+/, ''),
     hasFrontmatter: true,
   };
 }
@@ -140,12 +170,12 @@ export function parseIndex(text) {
   let section = null;
 
   lines.forEach((line, i) => {
-    const heading = line.match(/^(#{1,6})[ \t]+(.*)$/);
+    const heading = forMatch(line).match(/^(#{1,6})[ \t]+(.*)$/);
     if (heading) {
       section = heading[2].trim();
       parsedLines.push({ index: i, kind: 'heading', text: line, level: heading[1].length, section });
     } else {
-      const indexMatch = line.match(INDEX_LINE);
+      const indexMatch = forMatch(line).match(INDEX_LINE);
       // Only an unindented bullet is an index entry. An indented one is a
       // sub-bullet of surrounding prose and must not be treated as a pointer.
       if (indexMatch && indexMatch[1] === '') {
@@ -255,19 +285,23 @@ export function unwrapWikilink(text, target) {
 }
 
 function splitEntryLine(line) {
-  const match = line.match(INDEX_LINE);
+  const body = forMatch(line);
+  const match = body.match(INDEX_LINE);
   if (!match || match[1] !== '') return null;
   const file = match[3];
   const marker = `](${file})`;
-  const linkEnd = line.indexOf(marker) + marker.length;
-  const tail = line.slice(linkEnd);
+  const linkEnd = body.indexOf(marker) + marker.length;
+  const tail = body.slice(linkEnd);
   const separator = tail.match(HOOK_SEP);
   return {
-    head: line.slice(0, linkEnd),
+    head: body.slice(0, linkEnd),
     title: match[2].trim(),
     file,
     separator: separator ? separator[0] : null,
     hook: tail.replace(HOOK_SEP, ''),
+    // Carried so a rewritten line ends the way the line it replaces did. A file
+    // that comes back half CRLF and half LF is a file this tool corrupted.
+    eol: line.endsWith('\r') ? '\r' : '',
   };
 }
 
@@ -317,7 +351,7 @@ export function setIndexHook(text, index, expectedText, hook) {
 
   const separator = parts.separator || dominantSeparator(parseIndex(text));
   const before = lines[index];
-  lines[index] = trimmed ? `${parts.head}${separator}${trimmed}` : parts.head;
+  lines[index] = (trimmed ? `${parts.head}${separator}${trimmed}` : parts.head) + parts.eol;
   return { text: lines.join('\n'), before, after: lines[index] };
 }
 
@@ -396,7 +430,7 @@ export function sectionInsertIndex(parsed, section) {
 export function insertIndexEntry(text, at, line) {
   const lines = text.split('\n');
   const target = Math.max(0, Math.min(Number(at), lines.length));
-  lines.splice(target, 0, line);
+  lines.splice(target, 0, line + fileEol(lines));
   return { text: lines.join('\n'), index: target };
 }
 

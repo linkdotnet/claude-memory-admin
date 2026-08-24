@@ -241,3 +241,53 @@ test('reading a path never walks into an array or an inherited property', () => 
   assert.equal(readPath({}, ['toString']), undefined);
   assert.equal(readPath({ a: { b: 1 } }, ['a', 'b']), 1);
 });
+
+test('the disable switch is honoured from a settings env block too', { skip: managed }, () => {
+  // Claude Code exports the env block before a session starts, so a value set
+  // there disables auto memory exactly as the process environment would.
+  withProject({ 'settings.json': { env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' } } }, (dir) => {
+    const state = autoMemoryState({ projectDir: dir });
+    assert.equal(state.enabled, false);
+    assert.equal(state.scope, 'project');
+    assert.ok(state.setBy.endsWith(path.join('.claude', 'settings.json')));
+
+    const report = settingsReport({ projectDir: dir });
+    assert.equal(report.env.overrides, 'autoMemoryEnabled');
+    assert.equal(report.env.scope, 'project');
+  });
+});
+
+test('"0" and "false" in the env block leave auto memory on', { skip: managed }, () => {
+  for (const value of ['0', 'false', '']) {
+    withProject({ 'settings.json': { env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: value } } }, (dir) => {
+      assert.equal(autoMemoryState({ projectDir: dir }).enabled, true, `for ${JSON.stringify(value)}`);
+    });
+  }
+});
+
+test('an env block that is not an object is not descended into', { skip: managed }, () => {
+  withProject({ 'settings.json': { env: 'nonsense', autoMemoryEnabled: true } }, (dir) => {
+    assert.equal(autoMemoryState({ projectDir: dir }).enabled, true);
+  });
+});
+
+test('a settings report names the config directory and where it came from', () => {
+  const report = settingsReport({ projectDir: null });
+  assert.equal(report.configDir.name, 'CLAUDE_CONFIG_DIR');
+  assert.ok(report.configDir.path);
+  assert.ok(['env', 'default'].includes(report.configDir.source));
+});
+
+test('a Windows autoMemoryDirectory read on any platform is accepted', () => {
+  withProject({ 'settings.json': { autoMemoryDirectory: 'C:\\Users\\dev\\memory' } }, (dir) => {
+    const resolved = resolveMemoryDirectory({ projectDir: dir });
+    assert.equal(resolved.invalid, null);
+    assert.equal(resolved.path, 'C:\\Users\\dev\\memory');
+  });
+});
+
+test('a UNC autoMemoryDirectory is accepted', () => {
+  withProject({ 'settings.json': { autoMemoryDirectory: '\\\\server\\share\\memory' } }, (dir) => {
+    assert.equal(resolveMemoryDirectory({ projectDir: dir }).invalid, null);
+  });
+});

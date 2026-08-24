@@ -292,3 +292,54 @@ test('a move to an unknown section falls back to the top of the index', () => {
   const parsed = parseIndex(SECTIONED);
   assert.equal(sectionStartIndex(parsed, 'Nope'), topInsertIndex(parsed));
 });
+
+test('a CRLF index parses, rather than reading as an empty file', () => {
+  // JavaScript's `.` does not match a carriage return and every classifying
+  // regex here ends in `$`, so before this was handled a Windows-authored
+  // MEMORY.md produced no entries at all and every memory looked orphaned.
+  const parsed = parseIndex('# Memory\r\n\r\n- [A note](a.md) — the hook\r\n');
+  assert.equal(parsed.entries.length, 1);
+  assert.deepEqual(
+    { title: parsed.entries[0].title, file: parsed.entries[0].file, hook: parsed.entries[0].hook },
+    { title: 'A note', file: 'a.md', hook: 'the hook' },
+  );
+  assert.equal(parsed.entries[0].section, 'Memory');
+});
+
+test('a CRLF memory file yields its frontmatter', () => {
+  const parsed = parseFrontmatter('---\r\nname: a\r\ndescription: d\r\nmetadata:\r\n  type: user\r\n---\r\n\r\nBody\r\n');
+  assert.equal(parsed.hasFrontmatter, true);
+  assert.deepEqual(parsed.data, { name: 'a', description: 'd', metadata: { type: 'user' } });
+  assert.equal(parsed.body, 'Body\r\n');
+});
+
+test('rewriting a CRLF index leaves it entirely CRLF', () => {
+  // A file that comes back half CRLF and half LF is a file this tool corrupted:
+  // every line reads as changed in git, on a change the user did not make.
+  const source = '# Memory\r\n\r\n- [A](a.md) — old\r\n- [B](b.md) — keep\r\n';
+  const entry = parseIndex(source).entries[0];
+
+  for (const [name, result] of [
+    ['set', setIndexHook(source, entry.index, entry.text, 'new').text],
+    ['clear', setIndexHook(source, entry.index, entry.text, '').text],
+    ['remove', removeIndexEntries(source, 'a.md').text],
+  ]) {
+    assert.equal(/[^\r]\n/.test(result), false, `${name} introduced a bare newline`);
+  }
+});
+
+test('an inserted entry ends the way the file it joins does', () => {
+  const crlf = '# Memory\r\n\r\n- [B](b.md) — keep\r\n';
+  const added = insertIndexEntry(crlf, topInsertIndex(parseIndex(crlf)), '- [A](a.md) — new').text;
+  assert.equal(/[^\r]\n/.test(added), false);
+
+  const lf = '# Memory\n\n- [B](b.md) — keep\n';
+  const addedLf = insertIndexEntry(lf, topInsertIndex(parseIndex(lf)), '- [A](a.md) — new').text;
+  assert.equal(addedLf.includes('\r'), false);
+});
+
+test('an LF file is untouched by any of this', () => {
+  const source = '# Memory\n\n- [A](a.md) — old\n';
+  const entry = parseIndex(source).entries[0];
+  assert.equal(setIndexHook(source, entry.index, entry.text, 'new').text.includes('\r'), false);
+});

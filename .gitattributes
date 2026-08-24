@@ -1,0 +1,6 @@
+# Fixtures and sources are compared byte for byte by the test suite, so they have
+# to arrive identical on every platform. Without this a Windows checkout with
+# core.autocrlf on rewrites them to CRLF and those tests fail on content nobody
+# changed.
+* text=auto eol=lf
+*.webp binary

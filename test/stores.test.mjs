@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 import { buildStore } from '../src/model.mjs';
 import { deleteMemory, safeMemoryPath } from '../src/mutate.mjs';
-import { listAgentStores, listStores } from '../src/stores.mjs';
+import { linkAgentStores, listAgentStores, listStores } from '../src/stores.mjs';
+import { listAllAgents } from '../src/agents.mjs';
+import { agentStoreChecks } from '../src/checks.mjs';
 import { searchAll } from '../src/search.mjs';
 import { FIXTURE_ROOT } from './helpers.mjs';
 
@@ -128,4 +130,64 @@ test('search never reaches into the user scope', () => {
   const found = searchAll(FIXTURE_ROOT, 'conventions');
   assert.ok(!found.stores.some((s) => s.kind === 'global'));
   assert.ok(listStores(FIXTURE_ROOT, { home }).some((s) => s.kind === 'global'));
+});
+
+const DEFINITIONS = path.join(AGENTS, 'definitions');
+
+function linked(overrides = {}) {
+  const stores = listAgentStores({ userDir: USER_DIR, projectPaths: [REPO] });
+  const agents = listAllAgents({ dir: DEFINITIONS, projectPaths: [REPO] });
+  return linkAgentStores(stores, agents, overrides);
+}
+
+test('a store is linked to the definition that asks for it', () => {
+  const store = linked().find((s) => s.kind === 'agent-user');
+  assert.equal(store.linked, true);
+  assert.equal(store.declaredScope, 'user');
+  assert.equal(store.declaredBy, 'code-reviewer.md');
+  assert.deepEqual(agentStoreChecks(store), []);
+});
+
+test('a project-scope definition speaks only for its own repository', () => {
+  const store = linked().find((s) => s.kind === 'agent-project');
+  assert.equal(store.linked, true);
+  assert.equal(store.projectPath, REPO);
+  assert.deepEqual(agentStoreChecks(store), []);
+});
+
+test('a store whose agent moved scope is reported as a mismatch, not an orphan', () => {
+  // The `scratch` definition declares memory: project; the store on disk is local.
+  const store = linked().find((s) => s.kind === 'agent-local');
+  assert.equal(store.linked, false);
+  assert.equal(store.declaredScope, 'project');
+
+  const [issue] = agentStoreChecks(store);
+  assert.equal(issue.kind, 'agent-store-scope-mismatch');
+  assert.equal(issue.scope, 'local');
+  assert.equal(issue.declaredScope, 'project');
+});
+
+test('a store no definition mentions is an orphan', () => {
+  const stores = listAgentStores({ userDir: USER_DIR, projectPaths: [] });
+  const [store] = linkAgentStores(stores, []);
+  const [issue] = agentStoreChecks(store);
+  assert.equal(issue.kind, 'agent-store-orphan');
+  assert.equal(issue.defined, false);
+  assert.equal(issue.agentName, 'code-reviewer');
+});
+
+test('auto memory being off freezes every subagent store', () => {
+  const stores = linked({ autoMemory: { enabled: false, setBy: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY' } });
+  assert.ok(stores.every((s) => s.inert));
+
+  const [issue] = agentStoreChecks(stores[0]);
+  assert.equal(issue.kind, 'agent-memory-inert');
+  assert.equal(issue.setBy, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY');
+});
+
+test('a store that was never linked is not reported as an orphan', () => {
+  // Absence of a join is not evidence that nothing declares the store, and a
+  // caller that builds a store on its own must not be told otherwise.
+  const [store] = listAgentStores({ userDir: USER_DIR, projectPaths: [] });
+  assert.deepEqual(agentStoreChecks(store), []);
 });

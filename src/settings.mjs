@@ -11,10 +11,15 @@
 //               ->  .claude/settings.json  ->  ~/.claude/settings.json
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
-export const USER_SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
+import { configPath, configSource, expandHome, fixedProjectDirName, isAbsolutePath } from './config.mjs';
+
+export const USER_SETTINGS = configPath('settings.json');
+
+// Re-exported because this is where every caller has always imported it from,
+// and because settings values are the main thing that arrives `~/`-prefixed.
+export { expandHome };
 
 /** Default when nothing sets cleanupPeriodDays; transcripts older than this are swept. */
 export const DEFAULT_CLEANUP_PERIOD_DAYS = 30;
@@ -24,6 +29,7 @@ export const SETTINGS_SEVERITY = {
   unreadable: 'bad',
   'not-object': 'bad',
   'invalid-auto-memory-directory': 'bad',
+  'invalid-config-dir': 'bad',
 };
 
 export function summariseSettings(problems) {
@@ -149,11 +155,6 @@ export function lookupPath(layers, keyPath) {
   return null;
 }
 
-export function expandHome(value) {
-  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2));
-  return value;
-}
-
 /**
  * Where the auto memory store lives, per settings.
  *
@@ -171,10 +172,53 @@ export function resolveMemoryDirectory(options = {}) {
 
   const raw = typeof found.value === 'string' ? found.value.trim() : '';
   if (!raw) return null;
-  if (!raw.startsWith('/') && !raw.startsWith('~/') && !/^[A-Za-z]:[\\/]/.test(raw)) {
+  // Accepted on every platform, not only the one this is running on: a settings
+  // file is routinely shared between machines, and a Windows path read on macOS
+  // is a path this tool cannot open but must still report as intentional.
+  const rooted = raw.startsWith('~/') || raw.startsWith('~\\')
+    || isAbsolutePath(raw, 'win32') || isAbsolutePath(raw, 'linux');
+  if (!rooted) {
     return { ...found, raw, path: null, invalid: 'not an absolute or ~/ path' };
   }
   return { ...found, raw, path: expandHome(raw), invalid: null };
+}
+
+export const DISABLE_AUTO_MEMORY = 'CLAUDE_CODE_DISABLE_AUTO_MEMORY';
+
+/** The env-var convention Claude Code uses: set, and not "0" or "false". */
+function truthyEnv(value) {
+  if (value === null || value === undefined) return false;
+  const text = String(value).trim();
+  return Boolean(text) && text !== '0' && text !== 'false';
+}
+
+/**
+ * CLAUDE_CODE_DISABLE_AUTO_MEMORY, from either place it can be set.
+ *
+ * The process environment is the obvious one, but settings files carry an `env`
+ * block whose entries a session exports before it starts, so the same switch is
+ * equally settable in any of the five layers. Reading only process.env reported
+ * auto memory as on for anyone who had turned it off in a file - the reverse of
+ * what this tool is for.
+ */
+export function disableAutoMemoryEnv({ layers = null, projectDir = null, env = process.env } = {}) {
+  const raw = env[DISABLE_AUTO_MEMORY];
+  if (truthyEnv(raw)) {
+    return { disabling: true, value: raw, scope: 'env', file: null };
+  }
+
+  const found = lookupPath(layers || settingsLayers({ projectDir }), ['env', DISABLE_AUTO_MEMORY]);
+  if (found && truthyEnv(found.value)) {
+    return { disabling: true, value: found.value, scope: found.scope, file: found.file };
+  }
+
+  const value = raw ?? (found ? found.value : null);
+  return {
+    disabling: false,
+    value: value === undefined ? null : value,
+    scope: raw !== undefined && raw !== null ? 'env' : found?.scope ?? null,
+    file: raw !== undefined && raw !== null ? null : found?.file ?? null,
+  };
 }
 
 /**
@@ -186,12 +230,14 @@ export function resolveMemoryDirectory(options = {}) {
  * local layer to read, so the answer is unknown rather than assumed.
  */
 export function autoMemoryState({ projectDir = null } = {}) {
-  const env = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
-  if (env && env !== '0' && env !== 'false') {
-    return { enabled: false, setBy: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', scope: 'env', known: true };
+  const layers = settingsLayers({ projectDir });
+
+  const disabled = disableAutoMemoryEnv({ layers });
+  if (disabled.disabling) {
+    return { enabled: false, setBy: disabled.file || DISABLE_AUTO_MEMORY, scope: disabled.scope, known: true };
   }
 
-  const found = lookup(settingsLayers({ projectDir }), 'autoMemoryEnabled');
+  const found = lookup(layers, 'autoMemoryEnabled');
   if (found && typeof found.value === 'boolean') {
     return { enabled: found.value, setBy: found.file, scope: found.scope, known: true };
   }
@@ -263,8 +309,8 @@ export function settingsReport(options = {}) {
   const cleanup = keys.find((entry) => entry.key === 'cleanupPeriodDays');
   cleanup.normalized = cleanupPeriodDays(options);
 
-  const raw = process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
-  const disabling = Boolean(raw && raw !== '0' && raw !== 'false');
+  const disable = disableAutoMemoryEnv({ layers: reads.filter((read) => read.status === 'ok') });
+  const config = configSource();
 
   const problems = layers
     .filter((layer) => layer.status !== 'ok' && layer.status !== 'absent')
@@ -275,6 +321,16 @@ export function settingsReport(options = {}) {
       file: layer.file,
       detail: layer.error,
     }));
+
+  if (config.invalid) {
+    problems.push({
+      kind: 'invalid-config-dir',
+      severity: SETTINGS_SEVERITY['invalid-config-dir'],
+      scope: 'env',
+      file: null,
+      detail: config.invalid,
+    });
+  }
 
   const directory = resolveMemoryDirectory(options);
   if (directory && directory.invalid) {
@@ -292,9 +348,19 @@ export function settingsReport(options = {}) {
     layers,
     keys,
     env: {
-      name: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY',
-      value: raw ?? null,
-      overrides: disabling ? 'autoMemoryEnabled' : null,
+      name: DISABLE_AUTO_MEMORY,
+      value: disable.value,
+      scope: disable.scope,
+      file: disable.file,
+      overrides: disable.disabling ? 'autoMemoryEnabled' : null,
+    },
+    configDir: {
+      name: 'CLAUDE_CONFIG_DIR',
+      path: config.path,
+      source: config.source,
+      value: config.raw,
+      invalid: config.invalid,
+      fixedProjectDirName: fixedProjectDirName(),
     },
     problems,
   };

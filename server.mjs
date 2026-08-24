@@ -13,7 +13,7 @@ import { buildStore } from './src/model.mjs';
 import { resolveGlobalInstructions, resolveInstructions, summarise } from './src/instructions.mjs';
 import { settingsReport, summariseSettings } from './src/settings.mjs';
 import { costReport, writeUserSetting } from './src/cost.mjs';
-import { AGENTS_DIR, AGENT_FIELDS, agentsDirExists, listAgents, setAgentField } from './src/agents.mjs';
+import { AGENTS_DIR, AGENT_FIELDS, agentsDirExists, listAllAgents, setAgentField } from './src/agents.mjs';
 import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
 import { searchAll } from './src/search.mjs';
@@ -139,6 +139,67 @@ const VERSION = (() => {
     return null;
   }
 })();
+
+/**
+ * Every agent definition on the machine: the user directory plus the agents
+ * directory of each repository auto memory has already resolved a path for.
+ * Nothing here guesses at a repository that was not confirmed somewhere else.
+ */
+function allAgents() {
+  const projectPaths = listStores(ROOT)
+    .filter((store) => store.kind === 'auto' && store.pathExists)
+    .flatMap((store) => [store.path, ...(store.workingDirs || [])]);
+  return listAllAgents({ projectPaths });
+}
+
+/** Each subagent memory store next to the definition that asks for it, for the agents panel. */
+function agentStoreLinks() {
+  return listStores(ROOT)
+    .filter((store) => String(store.kind).startsWith('agent-'))
+    .map((store) => ({
+      id: store.id,
+      kind: store.kind,
+      agentName: store.agentName,
+      projectPath: store.projectPath,
+      memoryCount: store.memoryCount,
+      declaredBy: store.declaredBy ?? null,
+      declaredScope: store.declaredScope ?? null,
+      linked: Boolean(store.linked),
+      defined: Boolean(store.defined),
+      inert: Boolean(store.inert),
+      inertBy: store.inertBy ?? null,
+    }));
+}
+
+/**
+ * Hand the address to whatever opens a URL here, and never let that decide
+ * whether the server runs.
+ *
+ * `start` is a cmd.exe builtin rather than a program, so spawning it by name
+ * fails on Windows; the documented form is `cmd /c start "" <url>`, where the
+ * empty string is the window title `start` would otherwise read the URL as. On
+ * Linux `xdg-open` is simply missing on a minimal install and inside some
+ * containers. Either way the failure arrives as an async 'error' event, which
+ * with no listener is an uncaught exception that would take down a server that
+ * had already printed its address and was working perfectly well.
+ */
+function openBrowser(address) {
+  const [command, args] = process.platform === 'darwin'
+    ? ['open', [address]]
+    : process.platform === 'win32'
+      ? [process.env.COMSPEC || 'cmd.exe', ['/d', '/s', '/c', 'start', '""', address.replace(/&/g, '^&')]]
+      : ['xdg-open', [address]];
+
+  try {
+    const child = spawn(command, args, { stdio: 'ignore', detached: true, windowsHide: true });
+    child.on('error', () => {
+      console.log('Could not open a browser automatically - open the address above yourself.');
+    });
+    child.unref();
+  } catch {
+    console.log('Could not open a browser automatically - open the address above yourself.');
+  }
+}
 
 function storeProjectDir(store) {
   // The global store is the user scope itself, which no project owns.
@@ -331,10 +392,15 @@ async function handleApi(req, res, url) {
   if (action === 'cost' && req.method === 'GET') {
     return sendJson(res, 200, {
       settings: costReport(),
-      agents: listAgents(),
+      // Project-scope definitions come along read-only: an agent with
+      // `memory: project` lives in a repository rather than in the user
+      // directory, and leaving it out would show its memory store as belonging
+      // to no agent at all.
+      agents: allAgents(),
       agentsDir: AGENTS_DIR,
       agentsDirExists: agentsDirExists(),
       agentFields: AGENT_FIELDS,
+      agentStores: agentStoreLinks(),
     });
   }
 
@@ -346,8 +412,13 @@ async function handleApi(req, res, url) {
 
   if (action === 'cost/agent' && req.method === 'POST') {
     const body = await readBody(req);
-    const agents = setAgentField(body.file, body.field, body.value ?? null);
-    return sendJson(res, 200, { agents, agentsDir: AGENTS_DIR, agentsDirExists: agentsDirExists() });
+    setAgentField(body.file, body.field, body.value ?? null);
+    return sendJson(res, 200, {
+      agents: allAgents(),
+      agentsDir: AGENTS_DIR,
+      agentsDirExists: agentsDirExists(),
+      agentStores: agentStoreLinks(),
+    });
   }
 
   if (action === 'delete-preview' && req.method === 'POST') {
@@ -484,10 +555,7 @@ export function startServer({ port, root, open = true } = {}) {
     const address = `http://localhost:${listenPort}`;
     console.log(`Memory Admin  ->  ${address}`);
     console.log(`Reading       ->  ${ROOT}`);
-    if (open && !process.env.NO_OPEN) {
-      const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-      spawn(opener, [address], { stdio: 'ignore', detached: true }).unref();
-    }
+    if (open && !process.env.NO_OPEN) openBrowser(address);
   });
   return server;
 }

@@ -17,13 +17,23 @@ concurrency:
 
 jobs:
   test:
-    name: Test on Node ${{ matrix.node }}
-    runs-on: ubuntu-latest
+    name: Test on Node ${{ matrix.node }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # The floor is package.json's `engines`, plus current LTS and current.
+        os: [ubuntu-latest]
         node: ['20.6', '22', '24']
+        # Path handling is the part of this tool that differs by platform -
+        # separators, case sensitivity, drive letters, line endings - and it is
+        # developed on macOS only. One Node version on each of the other two is
+        # enough to catch that, and keeps the matrix at five jobs.
+        include:
+          - os: windows-latest
+            node: '22'
+          - os: macos-latest
+            node: '22'
 
     steps:
       - uses: actions/checkout@v5

@@ -108,9 +108,25 @@ safety net and not a place you browse.
   `~/.claude/settings.json`. A value that is neither absolute nor `~/`-prefixed
   is reported rather than quietly ignored.
 - **Whether Claude is still writing.** A project with `autoMemoryEnabled` off, or
-  `CLAUDE_CODE_DISABLE_AUTO_MEMORY` set, has a store that will never grow again,
-  which on disk is indistinguishable from one Claude has not learned anything
-  about yet. The project header says which it is, and names the file that decided.
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY` set - in the environment or in the `env`
+  block of any settings layer - has a store that will never grow again, which on
+  disk is indistinguishable from one Claude has not learned anything about yet.
+  The project header says which it is, and names the file that decided.
+- **Which subagent still asks for its memory.** A subagent store exists because
+  some agent file carried a `memory: user | project | local` field, and it stays
+  exactly where it is after that field moves to another scope or is removed. Each
+  store is shown next to the definition that declares it - from `agents/` in the
+  user scope and in each repository - and one that nothing declares any more is
+  marked `orphan`, one whose agent moved scope `moved`. Because subagent memory
+  is part of auto memory, turning auto memory off marks every one of them
+  `inert`: the `memory:` field stops having any effect, and the agent starts with
+  no memory instructions and no file tools at all.
+- **A config directory that is not `~/.claude`.** `CLAUDE_CONFIG_DIR` moves the
+  projects root, the agent definitions, the agent memory, the user `CLAUDE.md` and
+  rules, and the settings file together, and all of them are read from wherever it
+  points. The Environment tab names the directory and says whether the environment
+  or the default chose it. A `~/` written by hand is expanded here rather than left
+  to the shell, because `cmd` and PowerShell do not expand it.
 - **Search across every project**: names, descriptions, bodies and index hooks,
   with snippets and match highlighting. Press `/` to jump to it.
 - **Read each memory** with its frontmatter as structured metadata and
@@ -291,15 +307,22 @@ five and shows, per key, the value that wins and the ones it shadows, struck
 through, each labelled with the file it came from:
 
 `autoMemoryEnabled`, `autoMemoryDirectory`, `claudeMdExcludes` and
-`cleanupPeriodDays`, plus `CLAUDE_CODE_DISABLE_AUTO_MEMORY` when it is set in the
-environment, where it outranks every file.
+`cleanupPeriodDays`, plus `CLAUDE_CODE_DISABLE_AUTO_MEMORY` wherever it is set:
+in the environment, where it outranks every file, or in the `env` block of any of
+the five, which a session exports before it starts and which reading `process.env`
+alone would miss. `CLAUDE_CONFIG_DIR` is named here too, since it decides where
+all five of those files are looked for in the first place.
 
 It also names the failures that are otherwise silent:
 
 - A settings file that exists but is not valid JSON. Claude Code ignores the
   whole file, so every value in it is doing nothing, and nothing says so.
 - A file that parses but is not an object, or cannot be read at all.
-- An `autoMemoryDirectory` that is neither absolute nor `~/`-prefixed.
+- An `autoMemoryDirectory` that is neither absolute nor `~/`-prefixed. A Windows
+  path is accepted on any platform, because a settings file is routinely shared
+  between machines.
+- A `CLAUDE_CONFIG_DIR` that is not absolute, which Claude Code would not accept
+  either: the default is used and the fact is reported rather than swallowed.
 - A value Claude Code accepts the key of but not the number, like a
   `cleanupPeriodDays` below 1: it shows what is written *and* what applies.
 
@@ -453,6 +476,13 @@ claude-memory-admin --root /tmp/memory-snapshot
 ## Safety
 
 - Binds `127.0.0.1`; no telemetry, no network calls.
+- Runs on macOS, Linux and Windows. Line endings are the part of that which is not
+  cosmetic: a `MEMORY.md` saved by a Windows editor is CRLF, and a carriage return
+  is not something JavaScript's `.` matches, so a file like that once parsed as if
+  it were empty - no index entries, no frontmatter, every memory an orphan. It is
+  read correctly now, and a rewrite ends its lines the way it found them: a file
+  that came back half CRLF and half LF would show every line as changed in git, on
+  a change you never made.
 - Reads only `~/.claude/projects`, the agent memory directories and the `CLAUDE.md`
   chain, unless you switch on the path check above, which then also walks that one
   project's directory. It only ever reads: no path a memory names is opened, only
