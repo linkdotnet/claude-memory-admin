@@ -11,7 +11,7 @@ export const pct = (part, whole) => (whole > 0 ? (part / whole) * 100 : 0);
 
 function candidateNames(binary, env, platform) {
   if (platform !== 'win32') return [binary];
-  return text(env.PATHEXT || '.EXE').split(';').filter(Boolean).map((ext) => binary + ext.toLowerCase());
+  return text(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((ext) => binary + ext.toLowerCase());
 }
 
 export function findBinary(binary, env = process.env, platform = process.platform) {

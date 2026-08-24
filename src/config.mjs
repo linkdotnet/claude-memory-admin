@@ -17,15 +17,24 @@
 import os from 'node:os';
 import path from 'node:path';
 
+/** The separator rules of the named platform, rather than of the host. */
+const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
+
 /**
  * Expand a leading `~/`. Claude Code documents that form for autoMemoryDirectory
  * and it is what people type on every platform, Windows included, so it is
  * handled before any separator rule is applied.
+ *
+ * The join goes through pathFor rather than through path directly. A caller that
+ * names a platform is naming its separator too, and the native join would answer
+ * from the host instead: a POSIX home joined under win32 comes back rooted at no
+ * drive, which isAbsolutePath then rejects for a reason the caller never asked
+ * for.
  */
-export function expandHome(value, { home = os.homedir() } = {}) {
+export function expandHome(value, { home = os.homedir(), platform = process.platform } = {}) {
   if (typeof value !== 'string') return value;
   if (value === '~') return home;
-  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(home, value.slice(2));
+  if (value.startsWith('~/') || value.startsWith('~\\')) return pathFor(platform).join(home, value.slice(2));
   return value;
 }
 
@@ -79,11 +88,11 @@ export const DEFAULT_CONFIG_DIR_NAME = '.claude';
  * answer - but silently is not, hence `invalid`.
  */
 export function configSource({ env = process.env, home = os.homedir(), platform = process.platform } = {}) {
-  const fallback = path.join(home, DEFAULT_CONFIG_DIR_NAME);
+  const fallback = pathFor(platform).join(home, DEFAULT_CONFIG_DIR_NAME);
   const raw = typeof env.CLAUDE_CONFIG_DIR === 'string' ? env.CLAUDE_CONFIG_DIR.trim() : '';
   if (!raw) return { path: fallback, source: 'default', raw: null, invalid: null };
 
-  const expanded = expandHome(raw, { home });
+  const expanded = expandHome(raw, { home, platform });
   if (!isAbsolutePath(expanded, platform)) {
     return {
       path: fallback,

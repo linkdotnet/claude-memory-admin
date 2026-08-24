@@ -13,10 +13,11 @@ import {
 } from '../src/config.mjs';
 
 const HOME = '/home/dev';
+const WINDOWS_HOME = 'C:\\Users\\dev';
 
 test('the config directory defaults to .claude under the home directory', () => {
   const found = configSource({ env: {}, home: HOME, platform: 'linux' });
-  assert.equal(found.path, path.join(HOME, '.claude'));
+  assert.equal(found.path, path.posix.join(HOME, '.claude'));
   assert.equal(found.source, 'default');
   assert.equal(found.invalid, null);
 });
@@ -29,13 +30,23 @@ test('CLAUDE_CONFIG_DIR moves the whole config directory', () => {
 
 test('a ~/ prefixed CLAUDE_CONFIG_DIR is expanded', () => {
   const found = configSource({ env: { CLAUDE_CONFIG_DIR: '~/work/claude' }, home: HOME, platform: 'linux' });
-  assert.equal(found.path, path.join(HOME, 'work', 'claude'));
+  assert.equal(found.path, path.posix.join(HOME, 'work', 'claude'));
+  assert.equal(found.source, 'env');
+});
+
+test('a ~/ prefixed CLAUDE_CONFIG_DIR is expanded against a Windows home', () => {
+  const found = configSource({
+    env: { CLAUDE_CONFIG_DIR: '~/work/claude' },
+    home: WINDOWS_HOME,
+    platform: 'win32',
+  });
+  assert.equal(found.path, 'C:\\Users\\dev\\work\\claude');
   assert.equal(found.source, 'env');
 });
 
 test('a relative CLAUDE_CONFIG_DIR is reported rather than silently used', () => {
   const found = configSource({ env: { CLAUDE_CONFIG_DIR: 'claude' }, home: HOME, platform: 'linux' });
-  assert.equal(found.path, path.join(HOME, '.claude'));
+  assert.equal(found.path, path.posix.join(HOME, '.claude'));
   assert.equal(found.source, 'default');
   assert.match(found.invalid, /not an absolute/);
 });
@@ -55,9 +66,9 @@ test('a Windows path needs a drive or a share, not just a leading slash', () => 
 });
 
 test('expandHome handles both separators after the tilde', () => {
-  assert.equal(expandHome('~/a/b', { home: HOME }), path.join(HOME, 'a', 'b'));
-  assert.equal(expandHome('~\\a\\b', { home: HOME }), path.join(HOME, 'a\\b'));
-  assert.equal(expandHome('/absolute', { home: HOME }), '/absolute');
+  assert.equal(expandHome('~/a/b', { home: HOME, platform: 'linux' }), '/home/dev/a/b');
+  assert.equal(expandHome('~\\a\\b', { home: WINDOWS_HOME, platform: 'win32' }), 'C:\\Users\\dev\\a\\b');
+  assert.equal(expandHome('/absolute', { home: HOME, platform: 'linux' }), '/absolute');
 });
 
 test('toPosix gives glob syntax the one separator it knows', () => {

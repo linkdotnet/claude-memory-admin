@@ -39,11 +39,16 @@ const report = (projectDir, overrides) => {
   return rtkReport({ projectDir }, { run, home: HOME }).then((value) => ({ value, calls }));
 };
 
+// findBinary applies PATHEXT on Windows exactly as the shell does, so a bare
+// name is not an executable there and the fixture has to be named the way the
+// platform names one.
+const EXE = process.platform === 'win32' ? 'rtk.exe' : 'rtk';
+
 test('an executable on PATH is found, and a directory of the same name is not', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-path-'));
   const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'rtk-decoy-'));
-  fs.mkdirSync(path.join(decoy, 'rtk'));
-  const binary = path.join(dir, 'rtk');
+  fs.mkdirSync(path.join(decoy, EXE));
+  const binary = path.join(dir, EXE);
   fs.writeFileSync(binary, '#!/bin/sh\n');
   fs.chmodSync(binary, 0o755);
 
