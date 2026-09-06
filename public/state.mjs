@@ -5,7 +5,7 @@ export const SEGMENT_STORAGE = {
 
 const SEGMENTS = {
   memory: ['list', 'index', 'graph'],
-  environment: ['instructions', 'settings', 'cost', 'sessions', 'tools'],
+  environment: ['instructions', 'settings', 'cost', 'attribution', 'sessions', 'tools'],
 };
 
 const storedSegment = (tab) => {
@@ -41,7 +41,7 @@ export const state = {
   listSelection: new Set(),
   selecting: false,
   indexView: localStorage.getItem('memoryIndexView') === 'source' ? 'source' : 'rendered',
-  aux: { instructions: null, settings: null, cost: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null },
+  aux: { instructions: null, settings: null, cost: null, attribution: null, sessions: null, sessionDay: null, sessionFocus: null, tools: null },
   pathCheck: null,
   activeSessions: [],
 };

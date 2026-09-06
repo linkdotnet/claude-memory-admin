@@ -13,6 +13,7 @@ import { buildStore } from './src/model.mjs';
 import { resolveGlobalInstructions, resolveInstructions, summarise } from './src/instructions.mjs';
 import { settingsReport, summariseSettings } from './src/settings.mjs';
 import { costReport, writeUserSetting } from './src/cost.mjs';
+import { attributionReport, writeAttributionSetting } from './src/attribution.mjs';
 import { AGENTS_DIR, AGENT_FIELDS, agentsDirExists, listAllAgents, setAgentField } from './src/agents.mjs';
 import { listStores } from './src/stores.mjs';
 import { forgetPath, rememberPath } from './src/pathcache.mjs';
@@ -221,7 +222,7 @@ function storeProjectDir(store) {
  * frontmatter fields in a named file inside ~/.claude/agents. Neither can reach
  * an instruction file, which is what the rest of this guard exists to protect.
  */
-const GLOBAL_WRITE_ACTIONS = new Set(['cost/setting', 'cost/agent']);
+const GLOBAL_WRITE_ACTIONS = new Set(['cost/setting', 'cost/agent', 'attribution/setting']);
 
 export function refuseWritesToGlobal(store, method, action = null) {
   if (store.kind !== 'global' || method === 'GET') return;
@@ -389,6 +390,12 @@ async function handleApi(req, res, url) {
     return sendJson(res, 400, { error: 'The cost settings are user-scope, and are edited from the Global entry.' });
   }
 
+  // The Attribution segment. User scope only, for the same reason as Cost:
+  // it edits ~/.claude/settings.json, which applies to every session.
+  if ((action === 'attribution' || action.startsWith('attribution/')) && store.kind !== 'global') {
+    return sendJson(res, 400, { error: 'The attribution settings are user-scope, and are edited from the Global entry.' });
+  }
+
   if (action === 'cost' && req.method === 'GET') {
     return sendJson(res, 200, {
       settings: costReport(),
@@ -419,6 +426,16 @@ async function handleApi(req, res, url) {
       agentsDirExists: agentsDirExists(),
       agentStores: agentStoreLinks(),
     });
+  }
+
+  if (action === 'attribution' && req.method === 'GET') {
+    return sendJson(res, 200, { settings: attributionReport() });
+  }
+
+  if (action === 'attribution/setting' && req.method === 'POST') {
+    const body = await readBody(req);
+    writeAttributionSetting(body.key, body.value ?? null);
+    return sendJson(res, 200, { settings: attributionReport() });
   }
 
   if (action === 'delete-preview' && req.method === 'POST') {

@@ -144,7 +144,7 @@ export function normaliseCostValue(descriptor, value, outputStyles = []) {
  * leftover `"env": {}` is harmless but reads as a setting that is still there,
  * which is exactly the confusion this panel exists to remove.
  */
-function setPath(data, keyPath, value) {
+export function setPath(data, keyPath, value) {
   const [head, ...rest] = keyPath;
 
   if (!rest.length) {

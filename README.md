@@ -83,7 +83,7 @@ Everything lives under three tabs, each answering one question:
 | --- | --- | --- |
 | **Memory** | what is in here? | the memory list, `MEMORY.md`, the graph |
 | **Cleanup** | what should I fix? | the load meter and one worst-first list of fixable things |
-| **Environment** | what else does Claude load? | instructions, settings, sessions, tools - and, on Global, the two cost knobs it will write |
+| **Environment** | what else does Claude load? | instructions, settings, sessions, tools - and, on Global, the cost and attribution knobs it will write |
 
 Undo is a button in the project header rather than a fourth tab, because it is a
 safety net and not a place you browse.
@@ -272,7 +272,8 @@ even chosen, and it resolves without a project directory, so it is there even wh
 no project's real path could be recovered from a transcript.
 
 It holds instructions rather than memory, so it has no MEMORY.md, graph or trash,
-and search does not reach into it. It is the one entry with a **Cost** tab, below.
+and search does not reach into it. It is the one entry with **Cost** and
+**Attribution** tabs, below.
 
 This is re-derived from the documented resolution rules rather than reported by
 Claude Code, and the app says so. Run `/context` in a session for the ground
@@ -327,7 +328,7 @@ It also names the failures that are otherwise silent:
   `cleanupPeriodDays` below 1: it shows what is written *and* what applies.
 
 The Settings segment is read-only. It reports what is configured; it never writes
-a setting. The Cost segment, below, is the one that does.
+a setting. The Cost and Attribution segments, below, are the ones that do.
 
 ## The two settings that decide what a session costs
 
@@ -362,6 +363,23 @@ cannot be retuned here; `CLAUDE_CODE_SUBAGENT_MODEL` is what moves those.
 
 A settings file that exists but does not parse is refused rather than rewritten:
 overwriting it would silently drop every setting the tool could not read.
+
+## What Claude Code attributes to itself
+
+The **Attribution** segment sits beside Cost on the Global entry, and edits the
+same `~/.claude/settings.json`. Three keys, all under `attribution`:
+
+- **`commit`** - the co-authored-by trailer added to commits Claude Code makes.
+  Set it to hidden to drop it, or to your own text to replace it.
+- **`pr`** - the attribution line added to pull request descriptions. Same two
+  options: hidden, or your own text.
+- **`sessionUrl`** - the claude.ai session link appended to commits made from the
+  cloud or Remote Control. It cannot be replaced, only hidden.
+
+Each is shown the same way as Cost: every layer that sets it, strongest first,
+with a warning when a stronger layer already decides it and a save here would not
+take effect. The same refusal applies to a settings file that exists but does not
+parse.
 
 ## Tools: what a session saved, next to what it cost
 

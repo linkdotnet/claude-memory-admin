@@ -23,6 +23,7 @@ const NAVIGATION = [
       { id: 'instructions', label: 'Instructions' },
       { id: 'settings', label: 'Settings' },
       { id: 'cost', label: 'Cost' },
+      { id: 'attribution', label: 'Attribution' },
       { id: 'sessions', label: 'Sessions' },
       { id: 'tools', label: 'Tools' },
     ],
@@ -41,6 +42,7 @@ function segmentVisible(tab, segment, store) {
   }
   if (segment === 'instructions') return global || hasProjectDir(store);
   if (segment === 'cost') return global;
+  if (segment === 'attribution') return global;
   if (segment === 'tools') return state.tools.length > 0;
   if (global) return false;
   if (segment === 'sessions') return Boolean(store.sessions?.count);
@@ -56,9 +58,15 @@ export const costProblems = () => {
   ];
 };
 
+export const attributionProblems = () => state.aux.attribution?.settings?.problems || [];
+
 function segmentBadge(id) {
   if (id === 'cost') {
     const problems = costProblems();
+    return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
+  }
+  if (id === 'attribution') {
+    const problems = attributionProblems();
     return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
   }
   if (id === 'instructions') {
@@ -107,6 +115,7 @@ function tabBadge(tab, store) {
     ...(state.aux.instructions?.problems || []),
     ...(state.aux.settings?.problems || []),
     ...costProblems(),
+    ...attributionProblems(),
   ];
   return problems.length ? { badge: String(problems.length), tone: worstSeverity(problems) } : {};
 }
