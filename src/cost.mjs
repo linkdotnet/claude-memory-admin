@@ -1,5 +1,5 @@
-// The two settings keys that decide what a session costs, and the only two keys
-// this tool ever writes.
+// The settings keys that decide what a session costs, and the only keys this
+// tool ever writes.
 //
 // Everything else in the app reports; this module changes ~/.claude/settings.json.
 // That is a deliberate exception, so the surface is kept as narrow as it can be:
@@ -7,7 +7,7 @@
 // and a hard refusal to rewrite a settings file that did not parse - overwriting
 // one would silently drop every setting this tool could not read.
 //
-// The two keys:
+// The keys:
 //
 //   env.CLAUDE_CODE_SUBAGENT_MODEL  the model every subagent, agent-team member
 //                                   and workflow agent runs on. It outranks both
@@ -16,6 +16,9 @@
 //   outputStyle                     how Claude writes back in the main
 //                                   conversation. Subagents run their own system
 //                                   prompt and are untouched by it.
+//   promptSuggestionEnabled         whether a suggested next prompt is generated
+//                                   after every turn. On by default, and it
+//                                   spends tokens whether anyone uses it or not.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -75,6 +78,23 @@ export const COST_KEYS = [
       { value: 'Learning', label: 'Learning', note: 'longer answers' },
     ],
   },
+  {
+    key: 'promptSuggestion',
+    path: ['promptSuggestionEnabled'],
+    label: 'promptSuggestionEnabled',
+    title: 'Prompt suggestions',
+    detail: 'Generates a suggested next prompt after every turn, which reads the conversation again. Mostly cached, but not free, and wasted if nobody accepts the suggestions. Turn it off unless you use them.',
+    envVar: null,
+    unset: 'Default',
+    allowModelId: false,
+    custom: null,
+    recommended: false,
+    options: [
+      { value: null, label: 'Default', note: 'unset - on' },
+      { value: false, label: 'false', note: 'saves tokens' },
+      { value: true, label: 'true' },
+    ],
+  },
 ];
 
 /**
@@ -123,6 +143,7 @@ function optionsFor(descriptor, outputStyles) {
  */
 export function normaliseCostValue(descriptor, value, outputStyles = []) {
   if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean' && descriptor.options.some((option) => option.value === value)) return value;
   if (typeof value !== 'string') {
     throw new Error(`${descriptor.label} takes a string, not ${Array.isArray(value) ? 'a list' : typeof value}.`);
   }
@@ -224,6 +245,10 @@ export function costReport(options = {}) {
       shadowedByStronger: Boolean(winner && winner.scope !== 'user'),
       envVar: descriptor.envVar,
       envValue,
+      recommended: descriptor.recommended,
+      // Unset means the built-in default, which for every recommended key is on.
+      offRecommendation: descriptor.recommended !== undefined
+        && (winner ? winner.value : true) !== descriptor.recommended,
     };
   });
 

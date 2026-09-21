@@ -152,7 +152,7 @@ test('the global store answers the read endpoints and holds no memory', async ()
     // in cost.test.mjs against a temp file instead: over HTTP it would write the
     // developer's own ~/.claude/settings.json.
     const cost = await (await fetch(`${base}/api/stores/${encodeURIComponent(global.id)}/cost`)).json();
-    assert.deepEqual(cost.settings.keys.map((k) => k.key), ['subagentModel', 'outputStyle']);
+    assert.deepEqual(cost.settings.keys.map((k) => k.key), ['subagentModel', 'outputStyle', 'promptSuggestion']);
     assert.ok(Array.isArray(cost.agents));
     assert.ok(cost.agentsDir.endsWith(path.join('.claude', 'agents')));
     assert.deepEqual(Object.keys(cost.agentFields), ['model', 'effort']);

@@ -64,15 +64,16 @@ function picker(options, current, onPick) {
 
   for (const option of all) {
     control.append(node('option', {
-      value: option.value === null ? '' : option.value,
+      value: option.value === null ? '' : String(option.value),
       text: optionText(option),
     }));
   }
-  control.value = current === null || current === undefined ? '' : current;
+  control.value = current === null || current === undefined ? '' : String(current);
 
   control.addEventListener('change', () => {
     control.disabled = true;
-    onPick(control.value === '' ? null : control.value);
+    const picked = all.find((option) => option.value !== null && String(option.value) === control.value);
+    onPick(picked ? picked.value : null);
   });
   return control;
 }
@@ -143,6 +144,7 @@ function settingCard(entry, writable) {
       text: entry.effective ? show(entry.effective.value) : 'unset (default)',
     }),
     entry.effective ? node('span', { class: ui.scopeBadge(entry.effective.scope), text: entry.effective.scope }) : null,
+    entry.offRecommendation ? node('span', { class: ui.badge('warn'), text: `costs tokens - ${entry.recommended} recommended` }) : null,
   ]));
   card.append(node('p', { class: ui.noteTight, text: entry.detail }));
 
@@ -246,7 +248,7 @@ export async function renderCost(container) {
 
   container.append(node('p', {
     class: ui.noteTight,
-    text: `The two settings that decide what a session costs, and the model each of your agents runs on. This is the one place in the app that writes outside a memory store: changes land in ${data.settings.userFile} and in the files under ${data.agentsDir}. Your CLAUDE.md and the rest of the instruction chain are never touched.`,
+    text: `The settings that decide what a session costs, and the model each of your agents runs on. This is the one place in the app that writes outside a memory store: changes land in ${data.settings.userFile} and in the files under ${data.agentsDir}. Your CLAUDE.md and the rest of the instruction chain are never touched.`,
   }));
 
   for (const problem of data.settings.problems) {

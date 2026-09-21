@@ -1,4 +1,4 @@
-// The only two settings this tool writes, and the guard rails around writing
+// The only settings this tool writes, and the guard rails around writing
 // them.
 //
 // Everything runs against a temp settings file. The real ~/.claude/settings.json
@@ -178,7 +178,7 @@ test('the unset sentinel and an empty string both mean remove the key', () => {
 });
 
 test('a stronger layer is reported as shadowing the file this panel writes', { skip: managed }, () => {
-  withProject({ 'settings.json': { outputStyle: 'Explanatory', env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus' } } }, (dir) => {
+  withProject({ 'settings.json': { outputStyle: 'Explanatory', promptSuggestionEnabled: true, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus' } } }, (dir) => {
     const report = costReport({ projectDir: dir, env: {}, userFile: NO_USER_FILE });
     for (const entry of report.keys) {
       assert.equal(entry.effective.scope, 'project');
@@ -234,5 +234,30 @@ test('a settings file that does not parse is reported and disables saving', { sk
 test('a settings file that is simply absent still saves', { skip: managed }, () => {
   withFile(null, (file) => {
     assert.equal(costReport({ env: {}, userFile: file }).writable, true);
+  });
+});
+
+test('prompt suggestions take a boolean, not its string form', () => {
+  assert.equal(normaliseCostValue(descriptor('promptSuggestion'), false), false);
+  assert.equal(normaliseCostValue(descriptor('promptSuggestion'), true), true);
+  assert.throws(() => normaliseCostValue(descriptor('promptSuggestion'), 'false'), /is not a value/);
+  assert.throws(() => normaliseCostValue(descriptor('outputStyle'), false), /takes a string/);
+});
+
+test('prompt suggestions are written as a boolean and removed on unset', () => {
+  withFile(JSON.stringify({ outputStyle: 'Concise' }), (file) => {
+    writeUserSetting('promptSuggestion', false, { file });
+    assert.deepEqual(read(file), { outputStyle: 'Concise', promptSuggestionEnabled: false });
+    writeUserSetting('promptSuggestion', null, { file });
+    assert.deepEqual(read(file), { outputStyle: 'Concise' });
+  });
+});
+
+test('prompt suggestions left at the default are flagged as costing tokens', { skip: managed }, () => {
+  const unset = costReport({ env: {}, userFile: NO_USER_FILE }).keys.find((k) => k.key === 'promptSuggestion');
+  assert.equal(unset.offRecommendation, true);
+  withFile(JSON.stringify({ promptSuggestionEnabled: false }), (file) => {
+    const off = costReport({ env: {}, userFile: file }).keys.find((k) => k.key === 'promptSuggestion');
+    assert.equal(off.offRecommendation, false);
   });
 });
