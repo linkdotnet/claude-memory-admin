@@ -217,7 +217,7 @@ export async function renderSessions(container) {
   container.append(node('p', { class: ui.noteTight, text: 'The transcripts sitting beside this store\u2019s memory. Claude Code deletes them once they pass the retention period and never touches memory/, so this is the evidence that expires while the memories stay. This tab only reads, and only the head of each file - nothing here deletes a transcript.' }));
 
   if (active.length) {
-    const list = node('div', { class: ui.card });
+    const list = node('div', { class: ui.activeList });
     for (const session of active) {
       list.append(node('button', {
         class: ui.contextRowButton,

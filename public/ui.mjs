@@ -114,7 +114,7 @@ export const memoryFacts = 'mt-1.5 flex flex-wrap gap-3 font-mono text-2xs text-
 export const memoryFact = (warn) => (warn ? 'text-warn' : 'text-fg-muted');
 export const listItemRow = 'mb-1.5 flex items-start gap-2';
 
-export const card = 'rounded-lg border border-line bg-surface p-5 shadow-card';
+export const card = 'rounded-lg border border-line bg-surface p-5 shadow-card [&+&]:mt-3';
 export const detailHead = 'mb-1 flex items-start gap-3';
 export const detailTitle = 'flex-1 text-lg font-semibold tracking-tightest text-fg';
 export const detailDesc = 'mt-0 mb-3.5 text-sm text-fg-muted';
@@ -195,6 +195,7 @@ export const retentionScale = 'mt-1.5 flex justify-between font-mono text-2xs te
 
 export const meterPanels = 'mt-4 grid gap-5 border-t border-line pt-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-14';
 export const meterPanel = 'min-w-0';
+export const activeList = cx(card, 'mb-5');
 export const meterPanelHead = 'mb-2 flex flex-wrap items-baseline justify-between gap-2';
 export const meterPanelTitle = 'font-mono text-2xs font-semibold uppercase tracking-widest text-fg-subtle';
 export const heatBody = 'flex items-start gap-1.5';
