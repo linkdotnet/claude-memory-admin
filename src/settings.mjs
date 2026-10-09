@@ -199,26 +199,17 @@ function truthyEnv(value) {
  * block whose entries a session exports before it starts, so the same switch is
  * equally settable in any of the five layers. Reading only process.env reported
  * auto memory as on for anyone who had turned it off in a file - the reverse of
- * what this tool is for.
+ * what this tool is for. A file's entry replaces the shell's value, so the shell
+ * only decides when no file sets the variable.
  */
 export function disableAutoMemoryEnv({ layers = null, projectDir = null, env = process.env } = {}) {
-  const raw = env[DISABLE_AUTO_MEMORY];
-  if (truthyEnv(raw)) {
-    return { disabling: true, value: raw, scope: 'env', file: null };
-  }
-
   const found = lookupPath(layers || settingsLayers({ projectDir }), ['env', DISABLE_AUTO_MEMORY]);
-  if (found && truthyEnv(found.value)) {
-    return { disabling: true, value: found.value, scope: found.scope, file: found.file };
+  if (found) {
+    return { disabling: truthyEnv(found.value), value: found.value, scope: found.scope, file: found.file };
   }
 
-  const value = raw ?? (found ? found.value : null);
-  return {
-    disabling: false,
-    value: value === undefined ? null : value,
-    scope: raw !== undefined && raw !== null ? 'env' : found?.scope ?? null,
-    file: raw !== undefined && raw !== null ? null : found?.file ?? null,
-  };
+  const raw = env[DISABLE_AUTO_MEMORY] ?? null;
+  return { disabling: truthyEnv(raw), value: raw, scope: raw === null ? null : 'env', file: null };
 }
 
 /**

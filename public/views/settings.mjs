@@ -64,7 +64,9 @@ export async function renderSettings(container) {
     container.append(node('div', { class: ui.issue(false) }, [
       node('div', { class: ui.issueBody }, [
         node('div', { class: ui.issueTitle, text: `${data.env.name}=${data.env.value}` }),
-        node('div', { class: ui.issueDetail, text: `Set in this shell, so it outranks every settings file and forces ${data.env.overrides} off. The store will not grow while it is set.` }),
+        node('div', { class: ui.issueDetail, text: data.env.scope === 'env'
+          ? `Set in this shell and no settings file sets it, so it forces ${data.env.overrides} off. The store will not grow while it is set.`
+          : `Set in the env block of ${data.env.file}, which replaces any shell value, so it forces ${data.env.overrides} off. The store will not grow while it is set.` }),
       ]),
     ]));
   }

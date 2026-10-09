@@ -309,9 +309,9 @@ through, each labelled with the file it came from:
 
 `autoMemoryEnabled`, `autoMemoryDirectory`, `claudeMdExcludes` and
 `cleanupPeriodDays`, plus `CLAUDE_CODE_DISABLE_AUTO_MEMORY` wherever it is set:
-in the environment, where it outranks every file, or in the `env` block of any of
-the five, which a session exports before it starts and which reading `process.env`
-alone would miss. `CLAUDE_CONFIG_DIR` is named here too, since it decides where
+in the `env` block of any of the five, which a session exports over the shell's
+value and which reading `process.env` alone would miss, or in the environment,
+which decides only when no file sets it. `CLAUDE_CONFIG_DIR` is named here too, since it decides where
 all five of those files are looked for in the first place.
 
 It also names the failures that are otherwise silent:
@@ -351,8 +351,9 @@ saved to `~/.claude/settings.json`:
 Each is shown the way the Settings segment shows a key: every layer that sets it,
 strongest first, with the losers struck through. Your user file is the weakest of
 the five, so when something stronger already sets the key the panel says the save
-will not take effect *before* you make it. An environment variable outranks every
-file, and is called out when it disagrees with what is on disk.
+will not take effect *before* you make it. A shell export is called out when it
+disagrees with what is on disk: a file's `env` block replaces it, so it only
+decides when no file sets the variable.
 
 Below them, one row per agent file in `~/.claude/agents`, each with a **model** and
 an **effort** picker - a summariser pinned to Haiku while a reviewer stays on Opus.

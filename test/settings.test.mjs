@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  disableAutoMemoryEnv,
   autoMemoryState,
   lookupPath,
   readPath,
@@ -263,6 +264,14 @@ test('"0" and "false" in the env block leave auto memory on', { skip: managed },
       assert.equal(autoMemoryState({ projectDir: dir }).enabled, true, `for ${JSON.stringify(value)}`);
     });
   }
+});
+
+test('an env block value replaces the shell export of the same variable', { skip: managed }, () => {
+  withProject({ 'settings.json': { env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0' } } }, (dir) => {
+    const result = disableAutoMemoryEnv({ projectDir: dir, env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' } });
+    assert.equal(result.disabling, false);
+    assert.equal(result.scope, 'project');
+  });
 });
 
 test('an env block that is not an object is not descended into', { skip: managed }, () => {

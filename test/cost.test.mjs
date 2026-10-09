@@ -178,7 +178,7 @@ test('the unset sentinel and an empty string both mean remove the key', () => {
 });
 
 test('a stronger layer is reported as shadowing the file this panel writes', { skip: managed }, () => {
-  withProject({ 'settings.json': { outputStyle: 'Explanatory', promptSuggestionEnabled: true, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus' } } }, (dir) => {
+  withProject({ 'settings.json': { outputStyle: 'Explanatory', promptSuggestionEnabled: true, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' } } }, (dir) => {
     const report = costReport({ projectDir: dir, env: {}, userFile: NO_USER_FILE });
     for (const entry of report.keys) {
       assert.equal(entry.effective.scope, 'project');
@@ -260,4 +260,14 @@ test('prompt suggestions left at the default are flagged as costing tokens', { s
     const off = costReport({ env: {}, userFile: file }).keys.find((k) => k.key === 'promptSuggestion');
     assert.equal(off.offRecommendation, false);
   });
+});
+
+test('agent teams are written under env and the env object is pruned on unset', () => {
+  withFile(JSON.stringify({ outputStyle: 'Concise' }), (file) => {
+    writeUserSetting('agentTeams', '1', { file });
+    assert.deepEqual(read(file), { outputStyle: 'Concise', env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' } });
+    writeUserSetting('agentTeams', null, { file });
+    assert.deepEqual(read(file), { outputStyle: 'Concise' });
+  });
+  assert.throws(() => normaliseCostValue(descriptor('agentTeams'), 'yes'), /is not a value/);
 });

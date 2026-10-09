@@ -158,8 +158,9 @@ function settingCard(entry, writable) {
   if (entry.envValue && entry.envValue !== entry.effective?.value) {
     card.append(issue(
       `${entry.envVar}=${entry.envValue} is set in the environment`,
-      `An environment variable outranks every settings file, so any session started from a shell that has it runs on ${entry.envValue} whatever is saved here. This is what the shell that launched this tool had; a session started elsewhere may see something different.`,
-      { bad: true },
+      entry.effective
+        ? `A settings file's env block replaces a shell export, so ${entry.effective.value} from ${entry.effective.scope} settings is what a session runs with. This is what the shell that launched this tool had; a session started elsewhere may see something different.`
+        : `No settings file sets this, so any session started from a shell that has it runs with ${entry.envValue}. Saving a value below overrides the shell export.`,
     ));
   }
 

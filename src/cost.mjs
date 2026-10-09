@@ -19,6 +19,9 @@
 //   promptSuggestionEnabled         whether a suggested next prompt is generated
 //                                   after every turn. On by default, and it
 //                                   spends tokens whether anyone uses it or not.
+//   env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+//                                   whether a named subagent launches as a
+//                                   teammate, each one a full session of its own.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -93,6 +96,22 @@ export const COST_KEYS = [
       { value: null, label: 'Default', note: 'unset - on' },
       { value: false, label: 'false', note: 'saves tokens' },
       { value: true, label: 'true' },
+    ],
+  },
+  {
+    key: 'agentTeams',
+    path: ['env', 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'],
+    label: 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+    title: 'Agent teams',
+    detail: 'Experimental. When on, any subagent Claude names launches as a teammate: a full Claude Code session with its own context window, so token use scales with the number of teammates. Teams can form without being asked for, because Claude names subagents on its own.',
+    envVar: 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+    unset: 'Default',
+    allowModelId: false,
+    custom: null,
+    options: [
+      { value: null, label: 'Default', note: 'unset - off' },
+      { value: '1', label: '1', note: 'on - costs more tokens' },
+      { value: '0', label: '0', note: 'off, overrides a shell export' },
     ],
   },
 ];
