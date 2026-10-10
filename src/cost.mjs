@@ -22,6 +22,8 @@
 //   env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
 //                                   whether a named subagent launches as a
 //                                   teammate, each one a full session of its own.
+//   env.DISABLE_AUTOUPDATER         whether Claude Code updates itself in the
+//                                   background.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -112,6 +114,22 @@ export const COST_KEYS = [
       { value: null, label: 'Default', note: 'unset - off' },
       { value: '1', label: '1', note: 'on - costs more tokens' },
       { value: '0', label: '0', note: 'off, overrides a shell export' },
+    ],
+  },
+  {
+    key: 'autoUpdater',
+    path: ['env', 'DISABLE_AUTOUPDATER'],
+    label: 'DISABLE_AUTOUPDATER',
+    title: 'Auto updater',
+    detail: 'Claude Code checks for and installs updates in the background. Set to 1 to turn that off and update on your own schedule.',
+    envVar: 'DISABLE_AUTOUPDATER',
+    unset: 'Default',
+    allowModelId: false,
+    custom: null,
+    options: [
+      { value: null, label: 'Default', note: 'unset - updates automatically' },
+      { value: '1', label: '1', note: 'auto updates off' },
+      { value: '0', label: '0', note: 'on, overrides a shell export' },
     ],
   },
 ];

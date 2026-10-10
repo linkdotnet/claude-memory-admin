@@ -178,7 +178,7 @@ test('the unset sentinel and an empty string both mean remove the key', () => {
 });
 
 test('a stronger layer is reported as shadowing the file this panel writes', { skip: managed }, () => {
-  withProject({ 'settings.json': { outputStyle: 'Explanatory', promptSuggestionEnabled: true, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' } } }, (dir) => {
+  withProject({ 'settings.json': { outputStyle: 'Explanatory', promptSuggestionEnabled: true, env: { CLAUDE_CODE_SUBAGENT_MODEL: 'opus', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', DISABLE_AUTOUPDATER: '1' } } }, (dir) => {
     const report = costReport({ projectDir: dir, env: {}, userFile: NO_USER_FILE });
     for (const entry of report.keys) {
       assert.equal(entry.effective.scope, 'project');
@@ -270,4 +270,14 @@ test('agent teams are written under env and the env object is pruned on unset', 
     assert.deepEqual(read(file), { outputStyle: 'Concise' });
   });
   assert.throws(() => normaliseCostValue(descriptor('agentTeams'), 'yes'), /is not a value/);
+});
+
+test('the auto updater switch is written under env and the env object is pruned on unset', () => {
+  withFile(JSON.stringify({ outputStyle: 'Concise' }), (file) => {
+    writeUserSetting('autoUpdater', '1', { file });
+    assert.deepEqual(read(file), { outputStyle: 'Concise', env: { DISABLE_AUTOUPDATER: '1' } });
+    writeUserSetting('autoUpdater', null, { file });
+    assert.deepEqual(read(file), { outputStyle: 'Concise' });
+  });
+  assert.throws(() => normaliseCostValue(descriptor('autoUpdater'), 'yes'), /is not a value/);
 });
